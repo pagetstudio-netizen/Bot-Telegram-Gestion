@@ -35,6 +35,7 @@ export async function startBot() {
     // Enregistre le menu de commandes visible dans Telegram
     await bot.telegram.setMyCommands([
       { command: "settings",  description: "⚙️ Paramètres & activation du bot" },
+      { command: "language",  description: "🌍 Changer la langue du bot" },
       { command: "help",      description: "❓ Liste de toutes les commandes" },
       { command: "rules",     description: "📋 Afficher les règles du groupe" },
       { command: "stats",     description: "📊 Statistiques du groupe" },
@@ -48,6 +49,8 @@ export async function startBot() {
       { command: "unban",     description: "🔓 Débannir un membre (répondre au msg)" },
       { command: "setwelcome", description: "✏️ Définir le message de bienvenue" },
       { command: "setrules",  description: "📝 Définir les règles du groupe" },
+      { command: "filter",    description: "🔤 Ajouter un mot interdit" },
+      { command: "filters",   description: "🔤 Voir et gérer les filtres de mots" },
     ]);
     logger.info("Bot commands menu registered with Telegram");
 

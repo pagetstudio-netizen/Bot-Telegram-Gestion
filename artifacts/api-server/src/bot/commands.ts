@@ -1,8 +1,22 @@
 import { Telegraf } from "telegraf";
 import { db } from "@workspace/db";
-import { botGroupsTable, botWarningsTable, botBansTable, botViolationsTable, botWordFiltersTable } from "@workspace/db";
+import { botGroupsTable, botWarningsTable, botBansTable, botViolationsTable, botWordFiltersTable, botUserSettingsTable } from "@workspace/db";
 import { eq, and, count } from "drizzle-orm";
 import { logger } from "../lib/logger";
+import { t, SUPPORTED_LANGUAGES } from "./translations";
+
+async function getUserLang(userId: number): Promise<string> {
+  const row = await db.select().from(botUserSettingsTable)
+    .where(eq(botUserSettingsTable.telegramUserId, userId.toString()))
+    .limit(1).then((r) => r[0]);
+  return row?.language ?? "fr";
+}
+
+async function setUserLang(userId: number, lang: string) {
+  await db.insert(botUserSettingsTable)
+    .values({ telegramUserId: userId.toString(), language: lang })
+    .onConflictDoUpdate({ target: botUserSettingsTable.telegramUserId, set: { language: lang, updatedAt: new Date() } });
+}
 
 async function isAdmin(ctx: any): Promise<boolean> {
   if (!ctx.chat || ctx.chat.type === "private") return false;
@@ -117,6 +131,13 @@ function buildSettingsKeyboard(group: any) {
     { text: "📋 Règles du groupe",     callback_data: `set:rules:${group.telegramId}` },
   ]);
 
+  // Langue du groupe
+  const curLang = SUPPORTED_LANGUAGES[group.language as string] ?? SUPPORTED_LANGUAGES["fr"];
+  rows.push([{
+    text: `🌍 Langue du groupe : ${curLang.flag} ${curLang.label}`,
+    callback_data: `langmenu:${group.telegramId}`,
+  }]);
+
   // Terminer
   rows.push([{ text: "✅ Terminer", callback_data: `done:${group.telegramId}` }]);
 
@@ -180,6 +201,7 @@ function buildSettingsText(group: any) {
     `• Anti-Grossièretés : ${group.antiProfanity ? "✅" : "❌"}${actionLine(group.antiProfanity, group.antiProfanityAction)}\n` +
     `• Anti-Publicité : ${group.antiAdvertising ? "✅" : "❌"}${actionLine(group.antiAdvertising, group.antiAdvertisingAction)}\n\n` +
     `👤 *Accès au groupe :*\n` +
+    `• Langue : ${(SUPPORTED_LANGUAGES[group.language as string] ?? SUPPORTED_LANGUAGES["fr"]).flag} ${(SUPPORTED_LANGUAGES[group.language as string] ?? SUPPORTED_LANGUAGES["fr"]).label}\n` +
     `• Vérification à l'entrée : ${group.requireVerification ? `✅ (délai : ${group.verificationTimeout} min)` : "❌"}\n` +
     `  _${group.requireVerification ? "Les nouveaux membres doivent accepter les règles avant de pouvoir écrire." : "Les nouveaux membres peuvent écrire immédiatement."}_\n\n` +
     `📊 *Limites :*\n` +
@@ -206,13 +228,49 @@ export function setupCommands(bot: Telegraf) {
   // /start
   bot.command("start", async (ctx) => {
     if (ctx.chat.type === "private") {
-      await ctx.reply(
-        "🤖 *Bot Modérateur Telegram*\n\n" +
-          "Ajoutez-moi à votre groupe, donnez-moi les droits d'administrateur, puis tapez /settings pour configurer et activer la modération.\n\n" +
-          "/settings — ⚙️ Paramètres & activation\n" +
-          "/help — ❓ Aide complète",
-        { parse_mode: "Markdown" }
-      );
+      const lang = await getUserLang(ctx.from!.id);
+      await ctx.reply(t(lang, "start_private"), { parse_mode: "Markdown" });
+    }
+  });
+
+  // /language
+  bot.command("language", async (ctx) => {
+    const lang = ctx.chat.type === "private"
+      ? await getUserLang(ctx.from!.id)
+      : "fr";
+
+    const isGroupAdmin = ctx.chat.type !== "private" && await isAdmin(ctx);
+
+    if (ctx.chat.type !== "private" && !isGroupAdmin) {
+      // Utilisateur normal en groupe : ouvrir en DM
+      return ctx.reply("🌍 Utilisez `/language` en message privé avec le bot pour changer votre langue.", { parse_mode: "Markdown" });
+    }
+
+    if (ctx.chat.type === "private") {
+      // Langue personnelle
+      const rows = Object.entries(SUPPORTED_LANGUAGES).map(([code, info]) => [{
+        text: `${code === lang ? "✅ " : ""}${info.flag} ${info.label}`,
+        callback_data: `setuserlang:${code}`,
+      }]);
+      await ctx.reply(t(lang, "lang_select_title"), {
+        parse_mode: "Markdown",
+        reply_markup: { inline_keyboard: rows },
+      });
+    } else {
+      // Admin en groupe : changer la langue du groupe
+      const groupId = ctx.chat.id.toString();
+      const group = await ensureGroup(ctx.chat.id, (ctx.chat as any).title ?? "Groupe");
+      const glang = group?.language ?? "fr";
+      const rows = Object.entries(SUPPORTED_LANGUAGES).map(([code, info]) => [{
+        text: `${code === glang ? "✅ " : ""}${info.flag} ${info.label}`,
+        callback_data: `setgrouplang:${code}:${groupId}`,
+      }]);
+      await ctx.reply(t(glang, "lang_group_select_title", {
+        lang: `${SUPPORTED_LANGUAGES[glang]?.flag ?? "🇫🇷"} ${SUPPORTED_LANGUAGES[glang]?.label ?? "Français"}`,
+      }), {
+        parse_mode: "Markdown",
+        reply_markup: { inline_keyboard: rows },
+      });
     }
   });
 
@@ -300,10 +358,11 @@ export function setupCommands(bot: Telegraf) {
     if (ctx.chat.type === "private") return;
     const group = await db.select().from(botGroupsTable)
       .where(eq(botGroupsTable.telegramId, getGroupId(ctx.chat.id))).limit(1);
+    const glang = group[0]?.language ?? "fr";
     if (group[0]?.rulesText) {
-      await ctx.reply(`📋 *Règles du groupe :*\n\n${group[0].rulesText}`, { parse_mode: "Markdown" });
+      await ctx.reply(t(glang, "rules_header", { rules: group[0].rulesText }), { parse_mode: "Markdown" });
     } else {
-      await ctx.reply("❌ Aucune règle définie. Un admin peut les définir avec /setrules [texte].");
+      await ctx.reply(t(glang, "rules_not_set"), { parse_mode: "Markdown" });
     }
   });
 
@@ -352,7 +411,10 @@ export function setupCommands(bot: Telegraf) {
         return ctx.answerCbQuery("❌ Ce bouton n'est pas pour vous.", { show_alert: true });
       }
 
-      await ctx.answerCbQuery("✅ Bienvenue dans le groupe !");
+      const groupObj = await db.select().from(botGroupsTable)
+        .where(eq(botGroupsTable.telegramId, groupId)).limit(1).then((r) => r[0]);
+      const verLang = groupObj?.language ?? "fr";
+      await ctx.answerCbQuery(t(verLang, "verify_welcome_btn"));
 
       // Lever la restriction
       try {
@@ -382,9 +444,12 @@ export function setupCommands(bot: Telegraf) {
 
       // Remplacer le message de vérification par un message de confirmation
       const firstName = ctx.from!.first_name;
+      const groupObjForMsg = await db.select().from(botGroupsTable)
+        .where(eq(botGroupsTable.telegramId, groupId)).limit(1).then((r) => r[0]);
+      const confirmLang = groupObjForMsg?.language ?? "fr";
       try {
         await ctx.editMessageText(
-          `✅ *${firstName}* a accepté les règles et peut maintenant écrire dans le groupe. Bienvenue !`,
+          t(confirmLang, "verify_success", { name: firstName }),
           { parse_mode: "Markdown" }
         );
       } catch {}
@@ -1008,23 +1073,94 @@ export function setupCommands(bot: Telegraf) {
     } catch {}
   });
 
+  // ─── Sélection langue utilisateur (privé) ────────────────────────────────
+  bot.action(/^setuserlang:(\w+)$/, async (ctx) => {
+    const code = ctx.match[1];
+    if (!SUPPORTED_LANGUAGES[code]) return ctx.answerCbQuery("❌ Langue invalide.");
+    await setUserLang(ctx.from!.id, code);
+    const info = SUPPORTED_LANGUAGES[code];
+    await ctx.answerCbQuery(t(code, "lang_saved", { lang: `${info.flag} ${info.label}` }));
+    try {
+      // Rafraîchir le menu avec la nouvelle sélection
+      const rows = Object.entries(SUPPORTED_LANGUAGES).map(([c, inf]) => [{
+        text: `${c === code ? "✅ " : ""}${inf.flag} ${inf.label}`,
+        callback_data: `setuserlang:${c}`,
+      }]);
+      await ctx.editMessageReplyMarkup({ inline_keyboard: rows });
+    } catch {}
+  });
+
+  // ─── Sélection langue groupe (admin) ─────────────────────────────────────
+  bot.action(/^setgrouplang:(\w+):(.+)$/, async (ctx) => {
+    const code = ctx.match[1];
+    const groupId = ctx.match[2];
+    if (!SUPPORTED_LANGUAGES[code]) return ctx.answerCbQuery("❌ Langue invalide.");
+    if (!(await isAdmin(ctx))) return ctx.answerCbQuery("❌ Réservé aux administrateurs.");
+
+    await db.update(botGroupsTable)
+      .set({ language: code, updatedAt: new Date() })
+      .where(eq(botGroupsTable.telegramId, groupId));
+
+    const info = SUPPORTED_LANGUAGES[code];
+    await ctx.answerCbQuery(t(code, "lang_saved", { lang: `${info.flag} ${info.label}` }));
+    try {
+      const rows = Object.entries(SUPPORTED_LANGUAGES).map(([c, inf]) => [{
+        text: `${c === code ? "✅ " : ""}${inf.flag} ${inf.label}`,
+        callback_data: `setgrouplang:${c}:${groupId}`,
+      }]);
+      await ctx.editMessageReplyMarkup({ inline_keyboard: rows });
+    } catch {}
+  });
+
+  // ─── Menu langue depuis settings ─────────────────────────────────────────
+  bot.action(/^langmenu:(.+)$/, async (ctx) => {
+    if (!(await isAdmin(ctx))) return ctx.answerCbQuery("❌ Réservé aux administrateurs.");
+    const groupId = ctx.match[1];
+    const group = await db.select().from(botGroupsTable)
+      .where(eq(botGroupsTable.telegramId, groupId)).limit(1).then((r) => r[0]);
+    if (!group) return ctx.answerCbQuery("❌ Groupe introuvable.");
+    const glang = group.language ?? "fr";
+    await ctx.answerCbQuery();
+    const rows = Object.entries(SUPPORTED_LANGUAGES).map(([code, info]) => [{
+      text: `${code === glang ? "✅ " : ""}${info.flag} ${info.label}`,
+      callback_data: `setgrouplang:${code}:${groupId}`,
+    }]);
+    rows.push([{ text: "← Retour aux paramètres", callback_data: `back:${groupId}` }]);
+    try {
+      await ctx.editMessageText(
+        t(glang, "lang_group_select_title", {
+          lang: `${SUPPORTED_LANGUAGES[glang]?.flag ?? "🇫🇷"} ${SUPPORTED_LANGUAGES[glang]?.label ?? "Français"}`,
+        }),
+        { parse_mode: "Markdown", reply_markup: { inline_keyboard: rows } }
+      );
+    } catch {}
+  });
+
   // ─── Nouveaux membres ─────────────────────────────────────────────────────
   bot.on("new_chat_members", async (ctx) => {
     const group = await ensureGroup(ctx.chat.id, ctx.chat.title ?? "Groupe");
-    for (const member of ctx.message.new_chat_members) {
-      if (member.is_bot) continue;
-      const name = member.first_name;
-      const welcomeText = group?.welcomeMessage
-        ? group.welcomeMessage.replace("{name}", name).replace("{group}", ctx.chat.title ?? "ce groupe")
-        : `👋 Bienvenue *${name}* dans le groupe !`;
-      await ctx.reply(welcomeText, { parse_mode: "Markdown" });
+    if (!group?.requireVerification) {
+      // Pas de vérification : envoyer le message de bienvenue normal
+      for (const member of ctx.message.new_chat_members) {
+        if (member.is_bot) continue;
+        const name = member.first_name;
+        const glang = group?.language ?? "fr";
+        const welcomeText = group?.welcomeMessage
+          ? group.welcomeMessage.replace("{name}", name).replace("{group}", ctx.chat.title ?? "ce groupe")
+          : t(glang, "welcome_default", { name });
+        await ctx.reply(welcomeText, { parse_mode: "Markdown" });
+      }
     }
+    // Si vérification activée, le handler chat_member dans middleware.ts gère tout
   });
 
   // ─── Membres qui partent ──────────────────────────────────────────────────
   bot.on("left_chat_member", async (ctx) => {
     if (ctx.message.left_chat_member.is_bot) return;
-    await ctx.reply(`👋 Au revoir *${ctx.message.left_chat_member.first_name}* !`, { parse_mode: "Markdown" });
+    const group = await ensureGroup(ctx.chat.id, ctx.chat.title ?? "Groupe");
+    const glang = group?.language ?? "fr";
+    const name = ctx.message.left_chat_member.first_name;
+    await ctx.reply(t(glang, "goodbye_default", { name }), { parse_mode: "Markdown" });
   });
 
   logger.info("Bot commands registered");

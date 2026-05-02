@@ -11,6 +11,7 @@ import {
 import { eq, and, count } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import { ensureGroup } from "./commands";
+import { t } from "./translations";
 
 type MsgContext = NarrowedContext<Context, Update.MessageUpdate>;
 
@@ -44,7 +45,8 @@ async function autoBan(
   username: string | null,
   firstName: string,
   groupId: string,
-  maxWarnings: number
+  maxWarnings: number,
+  lang: string = "fr"
 ) {
   try {
     await ctx.telegram.banChatMember(ctx.chat.id, userId);
@@ -55,14 +57,12 @@ async function autoBan(
     });
     await logViolation(groupId, userIdStr, username, firstName, "auto_ban", "ban",
       `Auto-ban après ${maxWarnings} avertissements`);
-    await ctx.reply(`🔨 *${firstName}* a été banni automatiquement après ${maxWarnings} avertissements.`, { parse_mode: "Markdown" });
+    await ctx.reply(t(lang, "autoban_msg", { name: firstName, max: maxWarnings }), { parse_mode: "Markdown" });
   } catch (err) {
     logger.error({ err }, "Auto-ban failed");
-    // Erreur visible dans le groupe : le bot n'a pas les droits suffisants
     try {
       await ctx.reply(
-        `⚠️ *Impossible de bannir ${firstName}.*\n\nLe bot ne dispose pas du droit *"Bannir des membres"*.\n\n` +
-        `👉 Allez dans *Gérer le groupe → Administrateurs → ${ctx.botInfo?.first_name ?? "Bot"}* et activez la permission *"Bannir des utilisateurs"*.`,
+        t(lang, "ban_no_rights", { name: firstName, bot: ctx.botInfo?.first_name ?? "Bot" }),
         { parse_mode: "Markdown" }
       );
     } catch {}
@@ -115,21 +115,22 @@ async function applyAction(
 
     const totalWarns = Number(existingWarns) + 1;
 
-    // Afficher le compteur
+    const lang = group.language ?? "fr";
     const msg = await ctx.reply(
-      `⚠️ *${firstName}* : ${reason}\n🔢 Avertissement ${totalWarns}/${maxWarnings}`,
+      t(lang, "warn_msg", { name: firstName, reason, count: totalWarns, max: maxWarnings }),
       { parse_mode: "Markdown" }
     );
     setTimeout(async () => { try { await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id); } catch {} }, 8000);
 
-    // Si le max est atteint → bannir
     if (totalWarns >= maxWarnings) {
-      await autoBan(ctx, userId, userIdStr, username, firstName, groupId, maxWarnings);
+      await autoBan(ctx, userId, userIdStr, username, firstName, groupId, maxWarnings, lang);
     }
     return;
   }
 
   if (actionType === "mute") {
+    const lang = group.language ?? "fr";
+    const durMin = Math.round((group.muteDuration ?? 300) / 60);
     try {
       const until = Math.floor(Date.now() / 1000) + (group.muteDuration ?? 300);
       await ctx.telegram.restrictChatMember(ctx.chat.id, userId, {
@@ -137,9 +138,9 @@ async function applyAction(
         until_date: until,
       });
       await logViolation(groupId, userIdStr, username, firstName, "auto_mute", "mute",
-        `Muet auto ${Math.round((group.muteDuration ?? 300) / 60)} min — ${reason}`);
+        `Muet auto ${durMin} min — ${reason}`);
       const m = await ctx.reply(
-        `🔇 *${firstName}* : ${reason} — Silence ${Math.round((group.muteDuration ?? 300) / 60)} min.`,
+        t(lang, "mute_msg", { name: firstName, reason, duration: durMin }),
         { parse_mode: "Markdown" }
       );
       setTimeout(async () => { try { await ctx.telegram.deleteMessage(ctx.chat.id, m.message_id); } catch {} }, 8000);
@@ -148,16 +149,24 @@ async function applyAction(
   }
 
   if (actionType === "ban") {
+    const lang = group.language ?? "fr";
     try {
       await ctx.telegram.banChatMember(ctx.chat.id, userId);
       await db.insert(botBansTable).values({
         telegramGroupId: groupId, telegramUserId: userIdStr,
         username, firstName, reason: `Banni automatiquement : ${reason}`, bannedByUserId: "bot",
       });
-      await logViolation(groupId, userIdStr, username, firstName, "auto_ban", "ban",
-        `Banni : ${reason}`);
-      await ctx.reply(`🔨 *${firstName}* banni : ${reason}`, { parse_mode: "Markdown" });
-    } catch (err) { logger.error({ err }, "Auto-ban failed"); }
+      await logViolation(groupId, userIdStr, username, firstName, "auto_ban", "ban", `Banni : ${reason}`);
+      await ctx.reply(t(lang, "ban_msg", { name: firstName, reason }), { parse_mode: "Markdown" });
+    } catch (err) {
+      logger.error({ err }, "Auto-ban failed");
+      try {
+        await ctx.reply(
+          t(lang, "ban_no_rights", { name: firstName, bot: ctx.botInfo?.first_name ?? "Bot" }),
+          { parse_mode: "Markdown" }
+        );
+      } catch {}
+    }
     return;
   }
 }
@@ -246,6 +255,8 @@ export function setupMiddleware(bot: Telegraf) {
       if (["administrator", "creator"].includes(member.status)) return next();
     } catch {}
 
+    const lang = group.language ?? "fr";
+
     // ── Anti-flood ──────────────────────────────────────────────────────────
     if (group.antiFlood) {
       const floodKey = `${groupId}:${userId}:flood`;
@@ -259,7 +270,7 @@ export function setupMiddleware(bot: Telegraf) {
           if (flood.count > group.floodLimit) {
             if (flood.count === group.floodLimit + 1) {
               await applyAction(ctx as MsgContext, group.antiFloodAction ?? "mute",
-                `Flood : ${flood.count} messages en ${group.floodWindow}s`, groupId, group);
+                t(lang, "reason_flood", { count: flood.count, window: group.floodWindow }), groupId, group);
             } else {
               try { await ctx.deleteMessage(); } catch {}
             }
@@ -279,7 +290,7 @@ export function setupMiddleware(bot: Telegraf) {
       const last = floodMap.get(spamKey);
       if (last?.text === text) {
         await applyAction(ctx as MsgContext, group.antiSpamAction ?? "delete",
-          "Message dupliqué (spam)", groupId, group);
+          t(lang, "reason_spam"), groupId, group);
         return;
       }
       floodMap.set(spamKey, { count: 0, windowStart: Date.now(), text });
@@ -288,7 +299,7 @@ export function setupMiddleware(bot: Telegraf) {
     // ── Anti-liens ──────────────────────────────────────────────────────────
     if (group.antiLinks && text && LINK_REGEX.test(text)) {
       await applyAction(ctx as MsgContext, group.antiLinksAction ?? "warn",
-        "Lien non autorisé dans ce groupe", groupId, group);
+        t(lang, "reason_link"), groupId, group);
       return;
     }
 
@@ -297,7 +308,7 @@ export function setupMiddleware(bot: Telegraf) {
       const found = PROFANITY_LIST.find((word) => text.toLowerCase().includes(word));
       if (found) {
         await applyAction(ctx as MsgContext, group.antiProfanityAction ?? "warn",
-          "Langage inapproprié", groupId, group);
+          t(lang, "reason_profanity"), groupId, group);
         return;
       }
     }
@@ -320,7 +331,7 @@ export function setupMiddleware(bot: Telegraf) {
       for (const filter of filters) {
         if (lower.includes(filter.word.toLowerCase())) {
           await applyAction(ctx as MsgContext, filter.action ?? "delete",
-            `Mot interdit : "${filter.word}"`, groupId, group);
+            t(lang, "reason_word_filter", { word: filter.word }), groupId, group);
           return;
         }
       }
@@ -380,9 +391,15 @@ export function setupMiddleware(bot: Telegraf) {
       : "";
 
     const timeout = group.verificationTimeout ?? 5;
+    const glang = group.language ?? "fr";
+
     const welcomeText = group.welcomeMessage
-      ? `${group.welcomeMessage}\n\n⏱️ Vous avez *${timeout} minute(s)* pour accepter.`
-      : `👋 Bienvenue *${name}* !\n\nAvant de pouvoir écrire dans ce groupe, vous devez lire et accepter nos règles.${rulesPreview}\n\n⏱️ Vous avez *${timeout} minute(s)* pour accepter.`;
+      ? `${group.welcomeMessage}\n\n⏱️ ${timeout} min`
+      : t(glang, "verify_intro", {
+          name,
+          rules: rulesPreview,
+          timeout,
+        });
 
     let sentMsg: any;
     try {
@@ -390,7 +407,7 @@ export function setupMiddleware(bot: Telegraf) {
         parse_mode: "Markdown",
         reply_markup: {
           inline_keyboard: [[
-            { text: "✅ J'accepte les règles et je rejoins le groupe", callback_data: `verify:${user.id}:${groupId}` },
+            { text: t(glang, "verify_button"), callback_data: `verify:${user.id}:${groupId}` },
           ]],
         },
       });
@@ -405,9 +422,9 @@ export function setupMiddleware(bot: Telegraf) {
       try { await ctx.telegram.deleteMessage(chatId, sentMsg.message_id); } catch {}
       try {
         await ctx.telegram.banChatMember(chatId, user.id);
-        await ctx.telegram.unbanChatMember(chatId, user.id); // kick sans ban permanent
+        await ctx.telegram.unbanChatMember(chatId, user.id);
         await ctx.telegram.sendMessage(chatId,
-          `⏱️ *${name}* n'a pas accepté les règles dans le délai imparti et a été retiré du groupe.`,
+          t(glang, "verify_timeout_msg", { name }),
           { parse_mode: "Markdown" }
         );
         logger.info({ chatId, userId: user.id }, "Membre non vérifié expulsé");
@@ -430,31 +447,22 @@ export function setupMiddleware(bot: Telegraf) {
     if ((newStatus === "member" || newStatus === "administrator") && ctx.chat.type !== "private") {
       const chatId = ctx.chat.id;
       const title  = (ctx.chat as any).title ?? "Groupe";
-      await ensureGroup(chatId, title);
+      const group  = await ensureGroup(chatId, title);
       const hasAdminRights = newStatus === "administrator";
       const groupId = chatId.toString();
+      const lang = group?.language ?? "fr";
+
+      const msgKey = hasAdminRights ? "bot_added_admin" : "bot_added_no_admin";
 
       await ctx.telegram.sendMessage(
         chatId,
-        `👋 *Bonjour ! Je suis votre bot modérateur.*\n\n` +
-          (hasAdminRights
-            ? `✅ J'ai les droits d'administrateur.\n\n`
-            : `⚠️ *Je n'ai pas encore les droits d'administrateur.*\nMerci de m'en accorder pour pouvoir modérer.\n\n`) +
-          `🔴 *Je suis actuellement inactif.*\n` +
-          `La modération ne commencera pas tant qu'un administrateur ne m'aura pas configuré et activé.\n\n` +
-          `*Par où commencer ?*\n` +
-          `• Appuyez sur *"📋 Définir les règles"* pour écrire les règles du groupe maintenant\n` +
-          `• Ou appuyez sur *"⚙️ Paramètres"* pour tout configurer`,
+        t(lang, msgKey),
         {
           parse_mode: "Markdown",
           reply_markup: {
             inline_keyboard: [
-              [
-                { text: "📋 Définir les règles du groupe", callback_data: `set:rules:${groupId}` },
-              ],
-              [
-                { text: "⚙️ Ouvrir les paramètres",        callback_data: `open:settings:${groupId}` },
-              ],
+              [{ text: t(lang, "btn_set_rules"),      callback_data: `set:rules:${groupId}` }],
+              [{ text: t(lang, "btn_open_settings"),  callback_data: `open:settings:${groupId}` }],
             ],
           },
         }

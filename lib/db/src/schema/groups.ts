@@ -19,6 +19,7 @@ export const botGroupsTable = pgTable("bot_groups", {
   antiAdvertisingAction: text("anti_advertising_action").notNull().default("warn"),
   requireVerification: boolean("require_verification").notNull().default(false),
   verificationTimeout: integer("verification_timeout").notNull().default(5),
+  language: text("language").notNull().default("fr"),
   welcomeMessage: text("welcome_message"),
   rulesText: text("rules_text"),
   maxWarnings: integer("max_warnings").notNull().default(3),
