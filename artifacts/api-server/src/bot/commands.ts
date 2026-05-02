@@ -321,6 +321,22 @@ export function setupCommands(bot: Telegraf) {
     // Parse : action:field:groupId  ou  action:groupId  (pour done/back)
     const parts = data.split(":");
     const action = parts[0];
+    const field  = parts[1];
+
+    // ── Ouvrir les paramètres depuis le message de bienvenue ─────────────────
+    if (action === "open" && field === "settings") {
+      const groupId = parts.slice(2).join(":");
+      const group = await db.select().from(botGroupsTable).where(eq(botGroupsTable.telegramId, groupId)).limit(1).then((r) => r[0]);
+      if (!group) return ctx.answerCbQuery("❌ Groupe introuvable.");
+      await ctx.answerCbQuery();
+      try {
+        await ctx.editMessageText(buildSettingsText(group), {
+          parse_mode: "Markdown",
+          reply_markup: buildSettingsKeyboard(group),
+        });
+      } catch {}
+      return;
+    }
 
     // ── Terminer ────────────────────────────────────────────────────────────
     if (action === "done") {

@@ -237,16 +237,32 @@ export function setupMiddleware(bot: Telegraf) {
       const title  = (ctx.chat as any).title ?? "Groupe";
       await ensureGroup(chatId, title);
       const hasAdminRights = newStatus === "administrator";
+      const groupId = chatId.toString();
 
       await ctx.telegram.sendMessage(
         chatId,
         `👋 *Bonjour ! Je suis votre bot modérateur.*\n\n` +
           (hasAdminRights
             ? `✅ J'ai les droits d'administrateur.\n\n`
-            : `⚠️ *Je n'ai pas encore les droits d'administrateur.*\nMerci de m'en accorder pour que je puisse modérer.\n\n`) +
-          `🔴 *Je suis actuellement inactif.*\nLa modération ne commencera pas tant qu'un administrateur ne m'aura pas configuré.\n\n` +
-          `Tapez /settings pour configurer et activer le bot.`,
-        { parse_mode: "Markdown" }
+            : `⚠️ *Je n'ai pas encore les droits d'administrateur.*\nMerci de m'en accorder pour pouvoir modérer.\n\n`) +
+          `🔴 *Je suis actuellement inactif.*\n` +
+          `La modération ne commencera pas tant qu'un administrateur ne m'aura pas configuré et activé.\n\n` +
+          `*Par où commencer ?*\n` +
+          `• Appuyez sur *"📋 Définir les règles"* pour écrire les règles du groupe maintenant\n` +
+          `• Ou appuyez sur *"⚙️ Paramètres"* pour tout configurer`,
+        {
+          parse_mode: "Markdown",
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: "📋 Définir les règles du groupe", callback_data: `set:rules:${groupId}` },
+              ],
+              [
+                { text: "⚙️ Ouvrir les paramètres",        callback_data: `open:settings:${groupId}` },
+              ],
+            ],
+          },
+        }
       );
       logger.info({ chatId, title, hasAdminRights }, "Bot added to group");
     }
