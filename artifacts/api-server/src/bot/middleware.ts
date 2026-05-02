@@ -26,88 +26,102 @@ async function getGroup(chatId: number) {
 }
 
 async function logViolation(
-  groupId: string,
-  userId: string,
-  username: string | null,
-  firstName: string,
-  type: string,
-  action: string,
-  details?: string
+  groupId: string, userId: string, username: string | null,
+  firstName: string, type: string, action: string, details?: string
 ) {
   await db.insert(botViolationsTable).values({
-    telegramGroupId: groupId,
-    telegramUserId: userId,
-    username,
-    firstName,
-    violationType: type,
-    action,
-    details: details ?? null,
+    telegramGroupId: groupId, telegramUserId: userId,
+    username, firstName, violationType: type, action, details: details ?? null,
   });
 }
 
-async function muteUser(ctx: MsgContext, userId: number, seconds: number, groupId: string, reason: string) {
-  try {
-    const until = Math.floor(Date.now() / 1000) + seconds;
-    await ctx.telegram.restrictChatMember(ctx.chat.id, userId, {
-      permissions: { can_send_messages: false },
-      until_date: until,
-    });
-    await logViolation(
-      groupId, userId.toString(),
-      (ctx as any).from?.username ?? null,
-      (ctx as any).from?.first_name ?? "Inconnu",
-      reason, "mute",
-      `Muet auto ${Math.round(seconds / 60)} min`
-    );
-  } catch (err) {
-    logger.error({ err }, "Auto-mute failed");
-  }
-}
+// ─── Appliquer une action (delete / warn / mute / ban) ────────────────────
 
-async function deleteAndWarn(ctx: MsgContext, reason: string, groupId: string, group: any) {
-  try { await ctx.deleteMessage(); } catch {}
-
-  const userId = ctx.from!.id.toString();
-  const username = ctx.from?.username ?? null;
+async function applyAction(
+  ctx: MsgContext,
+  actionType: string,
+  reason: string,
+  groupId: string,
+  group: any
+) {
+  const userId    = ctx.from!.id;
+  const userIdStr = userId.toString();
+  const username  = ctx.from?.username ?? null;
   const firstName = ctx.from?.first_name ?? "Inconnu";
 
-  await db.insert(botWarningsTable).values({
-    telegramGroupId: groupId, telegramUserId: userId,
-    username, firstName, reason, warnedByUserId: "bot",
-  });
+  // Toujours supprimer le message
+  try { await ctx.deleteMessage(); } catch {}
 
-  await logViolation(groupId, userId, username, firstName, "auto_warning", "warn", reason);
+  if (actionType === "delete") {
+    await logViolation(groupId, userIdStr, username, firstName, "auto_delete", "delete", reason);
+    return;
+  }
 
-  const [{ count: totalWarns }] = await db
-    .select({ count: count() })
-    .from(botWarningsTable)
-    .where(and(eq(botWarningsTable.telegramGroupId, groupId), eq(botWarningsTable.telegramUserId, userId)));
+  if (actionType === "warn") {
+    await db.insert(botWarningsTable).values({
+      telegramGroupId: groupId, telegramUserId: userIdStr,
+      username, firstName, reason, warnedByUserId: "bot",
+    });
+    await logViolation(groupId, userIdStr, username, firstName, "auto_warning", "warn", reason);
 
-  const maxWarnings = group.maxWarnings ?? 3;
-  const msg = await ctx.reply(
-    `⚠️ *${firstName}* : ${reason}\n🔢 Avertissement ${totalWarns}/${maxWarnings}`,
-    { parse_mode: "Markdown" }
-  );
+    const [{ count: totalWarns }] = await db
+      .select({ count: count() })
+      .from(botWarningsTable)
+      .where(and(eq(botWarningsTable.telegramGroupId, groupId), eq(botWarningsTable.telegramUserId, userIdStr)));
 
-  setTimeout(async () => {
-    try { await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id); } catch {}
-  }, 8000);
+    const maxWarnings = group.maxWarnings ?? 3;
+    const msg = await ctx.reply(
+      `⚠️ *${firstName}* : ${reason}\n🔢 Avertissement ${totalWarns}/${maxWarnings}`,
+      { parse_mode: "Markdown" }
+    );
+    setTimeout(async () => { try { await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id); } catch {} }, 8000);
 
-  if (Number(totalWarns) >= maxWarnings) {
-    try {
-      await ctx.telegram.banChatMember(ctx.chat.id, ctx.from!.id);
-      await db.insert(botBansTable).values({
-        telegramGroupId: groupId, telegramUserId: userId,
-        username, firstName,
-        reason: `Auto-ban après ${maxWarnings} avertissements`,
-        bannedByUserId: "bot",
-      });
-      await logViolation(groupId, userId, username, firstName, "auto_ban", "ban",
-        `Auto-ban après ${maxWarnings} avertissements`);
-      await ctx.reply(`🔨 *${firstName}* a été banni après ${maxWarnings} avertissements.`, { parse_mode: "Markdown" });
-    } catch (err) {
-      logger.error({ err }, "Auto-ban failed");
+    if (Number(totalWarns) >= maxWarnings) {
+      try {
+        await ctx.telegram.banChatMember(ctx.chat.id, userId);
+        await db.insert(botBansTable).values({
+          telegramGroupId: groupId, telegramUserId: userIdStr,
+          username, firstName,
+          reason: `Auto-ban après ${maxWarnings} avertissements`, bannedByUserId: "bot",
+        });
+        await logViolation(groupId, userIdStr, username, firstName, "auto_ban", "ban",
+          `Auto-ban après ${maxWarnings} avertissements`);
+        await ctx.reply(`🔨 *${firstName}* banni après ${maxWarnings} avertissements.`, { parse_mode: "Markdown" });
+      } catch (err) { logger.error({ err }, "Auto-ban failed"); }
     }
+    return;
+  }
+
+  if (actionType === "mute") {
+    try {
+      const until = Math.floor(Date.now() / 1000) + (group.muteDuration ?? 300);
+      await ctx.telegram.restrictChatMember(ctx.chat.id, userId, {
+        permissions: { can_send_messages: false },
+        until_date: until,
+      });
+      await logViolation(groupId, userIdStr, username, firstName, "auto_mute", "mute",
+        `Muet auto ${Math.round((group.muteDuration ?? 300) / 60)} min — ${reason}`);
+      const m = await ctx.reply(
+        `🔇 *${firstName}* : ${reason} — Silence ${Math.round((group.muteDuration ?? 300) / 60)} min.`,
+        { parse_mode: "Markdown" }
+      );
+      setTimeout(async () => { try { await ctx.telegram.deleteMessage(ctx.chat.id, m.message_id); } catch {} }, 8000);
+    } catch (err) { logger.error({ err }, "Auto-mute failed"); }
+    return;
+  }
+
+  if (actionType === "ban") {
+    try {
+      await ctx.telegram.banChatMember(ctx.chat.id, userId);
+      await db.insert(botBansTable).values({
+        telegramGroupId: groupId, telegramUserId: userIdStr,
+        username, firstName, reason: `Banni automatiquement : ${reason}`, bannedByUserId: "bot",
+      });
+      await logViolation(groupId, userIdStr, username, firstName, "auto_ban", "ban",
+        `Banni : ${reason}`);
+      await ctx.reply(`🔨 *${firstName}* banni : ${reason}`, { parse_mode: "Markdown" });
+    } catch (err) { logger.error({ err }, "Auto-ban failed"); }
+    return;
   }
 }
 
@@ -123,20 +137,20 @@ export function setupMiddleware(bot: Telegraf) {
     if (!ctx.chat || ctx.chat.type === "private") return next();
     if (!ctx.from || ctx.from.is_bot) return next();
 
-    const msg = ctx.message as any;
+    const msg  = ctx.message as any;
     const text: string = msg.text ?? msg.caption ?? "";
-    const groupId = ctx.chat.id.toString();
-    const userId = ctx.from.id;
-    const username = ctx.from.username ?? null;
+    const groupId   = ctx.chat.id.toString();
+    const userId    = ctx.from.id;
+    const username  = ctx.from.username ?? null;
     const firstName = ctx.from.first_name;
 
     const group = await getGroup(ctx.chat.id);
     if (!group) return next();
 
-    // ── Si le bot est inactif, aucune modération automatique ────────────────
+    // Si le bot est inactif, aucune modération automatique
     if (!group.isActive) return next();
 
-    // ── Les admins sont exemptés de toute modération ────────────────────────
+    // Les admins sont exemptés
     try {
       const member = await ctx.telegram.getChatMember(ctx.chat.id, userId);
       if (["administrator", "creator"].includes(member.status)) return next();
@@ -145,7 +159,7 @@ export function setupMiddleware(bot: Telegraf) {
     // ── Anti-flood ──────────────────────────────────────────────────────────
     if (group.antiFlood) {
       const floodKey = `${groupId}:${userId}:flood`;
-      const now = Date.now();
+      const now  = Date.now();
       const flood = floodMap.get(floodKey);
 
       if (flood) {
@@ -153,16 +167,11 @@ export function setupMiddleware(bot: Telegraf) {
         if (elapsed <= group.floodWindow) {
           flood.count++;
           if (flood.count > group.floodLimit) {
-            try { await ctx.deleteMessage(); } catch {}
             if (flood.count === group.floodLimit + 1) {
-              await muteUser(ctx as MsgContext, userId, group.muteDuration, groupId, "flood");
-              await logViolation(groupId, userId.toString(), username, firstName, "flood", "mute",
-                `Flood: ${flood.count} msgs en ${group.floodWindow}s`);
-              const m = await ctx.reply(
-                `🔇 *${firstName}* : Trop de messages ! Silence ${group.muteDuration / 60} min.`,
-                { parse_mode: "Markdown" }
-              );
-              setTimeout(async () => { try { await ctx.telegram.deleteMessage(ctx.chat.id, m.message_id); } catch {} }, 8000);
+              await applyAction(ctx as MsgContext, group.antiFloodAction ?? "mute",
+                `Flood : ${flood.count} messages en ${group.floodWindow}s`, groupId, group);
+            } else {
+              try { await ctx.deleteMessage(); } catch {}
             }
             return;
           }
@@ -179,10 +188,8 @@ export function setupMiddleware(bot: Telegraf) {
       const spamKey = `${groupId}:${userId}:spam`;
       const last = floodMap.get(spamKey);
       if (last?.text === text) {
-        try { await ctx.deleteMessage(); } catch {}
-        await logViolation(groupId, userId.toString(), username, firstName, "spam", "delete", "Message dupliqué");
-        const m = await ctx.reply(`🚫 *${firstName}* : Messages dupliqués interdits !`, { parse_mode: "Markdown" });
-        setTimeout(async () => { try { await ctx.telegram.deleteMessage(ctx.chat.id, m.message_id); } catch {} }, 5000);
+        await applyAction(ctx as MsgContext, group.antiSpamAction ?? "delete",
+          "Message dupliqué (spam)", groupId, group);
         return;
       }
       floodMap.set(spamKey, { count: 0, windowStart: Date.now(), text });
@@ -190,51 +197,30 @@ export function setupMiddleware(bot: Telegraf) {
 
     // ── Anti-liens ──────────────────────────────────────────────────────────
     if (group.antiLinks && text && LINK_REGEX.test(text)) {
-      await deleteAndWarn(ctx as MsgContext, "Liens non autorisés dans ce groupe", groupId, group);
+      await applyAction(ctx as MsgContext, group.antiLinksAction ?? "warn",
+        "Lien non autorisé dans ce groupe", groupId, group);
       return;
     }
 
     // ── Anti-profanité ──────────────────────────────────────────────────────
     if (group.antiProfanity && text) {
-      const lowerText = text.toLowerCase();
-      const found = PROFANITY_LIST.find((word) => lowerText.includes(word));
+      const found = PROFANITY_LIST.find((word) => text.toLowerCase().includes(word));
       if (found) {
-        await deleteAndWarn(ctx as MsgContext, "Langage inapproprié", groupId, group);
+        await applyAction(ctx as MsgContext, group.antiProfanityAction ?? "warn",
+          "Langage inapproprié", groupId, group);
         return;
       }
     }
 
     // ── Filtres de mots personnalisés ───────────────────────────────────────
     if (text) {
-      const filters = await db
-        .select()
-        .from(botWordFiltersTable)
+      const filters = await db.select().from(botWordFiltersTable)
         .where(eq(botWordFiltersTable.telegramGroupId, groupId));
-
-      const lowerText = text.toLowerCase();
+      const lower = text.toLowerCase();
       for (const filter of filters) {
-        if (lowerText.includes(filter.word.toLowerCase())) {
-          if (filter.action === "delete") {
-            try { await ctx.deleteMessage(); } catch {}
-            await logViolation(groupId, userId.toString(), username, firstName, "word_filter", "delete", `Mot interdit: ${filter.word}`);
-          } else if (filter.action === "warn") {
-            await deleteAndWarn(ctx as MsgContext, `Mot interdit: "${filter.word}"`, groupId, group);
-          } else if (filter.action === "mute") {
-            try { await ctx.deleteMessage(); } catch {}
-            await muteUser(ctx as MsgContext, userId, group.muteDuration, groupId, "word_filter");
-          } else if (filter.action === "ban") {
-            try {
-              await ctx.deleteMessage();
-              await ctx.telegram.banChatMember(ctx.chat.id, userId);
-              await db.insert(botBansTable).values({
-                telegramGroupId: groupId, telegramUserId: userId.toString(),
-                username, firstName,
-                reason: `Mot interdit: ${filter.word}`, bannedByUserId: "bot",
-              });
-              await logViolation(groupId, userId.toString(), username, firstName, "word_filter_ban", "ban",
-                `Banni pour mot interdit: ${filter.word}`);
-            } catch {}
-          }
+        if (lower.includes(filter.word.toLowerCase())) {
+          await applyAction(ctx as MsgContext, filter.action ?? "delete",
+            `Mot interdit : "${filter.word}"`, groupId, group);
           return;
         }
       }
@@ -243,17 +229,13 @@ export function setupMiddleware(bot: Telegraf) {
     return next();
   });
 
-  // ── Bot ajouté au groupe — message de configuration (sans modération) ────
+  // ── Bot ajouté au groupe ─────────────────────────────────────────────────
   bot.on("my_chat_member", async (ctx) => {
     const newStatus = ctx.myChatMember?.new_chat_member?.status;
-    const oldStatus = ctx.myChatMember?.old_chat_member?.status;
-
     if ((newStatus === "member" || newStatus === "administrator") && ctx.chat.type !== "private") {
       const chatId = ctx.chat.id;
-      const title = (ctx.chat as any).title ?? "Groupe";
-
+      const title  = (ctx.chat as any).title ?? "Groupe";
       await ensureGroup(chatId, title);
-
       const hasAdminRights = newStatus === "administrator";
 
       await ctx.telegram.sendMessage(
@@ -261,16 +243,12 @@ export function setupMiddleware(bot: Telegraf) {
         `👋 *Bonjour ! Je suis votre bot modérateur.*\n\n` +
           (hasAdminRights
             ? `✅ J'ai les droits d'administrateur.\n\n`
-            : `⚠️ *Je n'ai pas encore les droits d'administrateur.*\nMerci de m'accorder les droits pour que je puisse modérer.\n\n`) +
-          `🔴 *Je suis actuellement inactif.* La modération ne commencera pas tant qu'un administrateur ne m'aura pas configuré et activé.\n\n` +
-          `Pour commencer, tapez /settings pour :\n` +
-          `• Choisir les règles de modération\n` +
-          `• Définir le message de bienvenue\n` +
-          `• M'activer quand tout est prêt`,
+            : `⚠️ *Je n'ai pas encore les droits d'administrateur.*\nMerci de m'en accorder pour que je puisse modérer.\n\n`) +
+          `🔴 *Je suis actuellement inactif.*\nLa modération ne commencera pas tant qu'un administrateur ne m'aura pas configuré.\n\n` +
+          `Tapez /settings pour configurer et activer le bot.`,
         { parse_mode: "Markdown" }
       );
-
-      logger.info({ chatId, title, hasAdminRights }, "Bot added to group — setup message sent (inactive)");
+      logger.info({ chatId, title, hasAdminRights }, "Bot added to group");
     }
   });
 
