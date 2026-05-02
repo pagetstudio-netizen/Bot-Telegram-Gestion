@@ -292,6 +292,101 @@ export function setupMiddleware(bot: Telegraf) {
     return next();
   });
 
+  // ── Vérification à l'entrée (nouveaux membres) ──────────────────────────
+  // Map: "groupId:userId" → { msgId, timer }
+  const pendingVerifications = new Map<string, { msgId: number; timer: ReturnType<typeof setTimeout> }>();
+
+  bot.on("chat_member", async (ctx) => {
+    const update = ctx.chatMember;
+    const newMember = update.new_chat_member;
+    const oldMember = update.old_chat_member;
+
+    // Seulement quand quelqu'un rejoint (pas les bots)
+    const isJoining = ["left", "kicked", "restricted"].includes(oldMember.status)
+      && ["member", "restricted"].includes(newMember.status);
+    if (!isJoining) return;
+    if (newMember.user.is_bot) return;
+
+    const chatId = ctx.chat.id;
+    const group = await getGroup(chatId);
+    if (!group || !group.isActive || !group.requireVerification) return;
+
+    const user = newMember.user;
+    const name = user.first_name + (user.last_name ? ` ${user.last_name}` : "");
+    const groupId = chatId.toString();
+    const verKey = `${groupId}:${user.id}`;
+
+    // 1. Mute le nouveau membre immédiatement
+    try {
+      await ctx.telegram.restrictChatMember(chatId, user.id, {
+        permissions: {
+          can_send_messages: false,
+          can_send_audios: false,
+          can_send_documents: false,
+          can_send_photos: false,
+          can_send_videos: false,
+          can_send_video_notes: false,
+          can_send_voice_notes: false,
+          can_send_polls: false,
+          can_send_other_messages: false,
+          can_add_web_page_previews: false,
+        },
+      });
+    } catch (err) {
+      logger.warn({ err }, "Impossible de muter le nouveau membre");
+      return;
+    }
+
+    // 2. Envoyer message de bienvenue avec bouton d'acceptation
+    const rulesPreview = group.rulesText
+      ? `\n\n📋 *Règles du groupe :*\n${group.rulesText.slice(0, 300)}${group.rulesText.length > 300 ? "…" : ""}`
+      : "";
+
+    const timeout = group.verificationTimeout ?? 5;
+    const welcomeText = group.welcomeMessage
+      ? `${group.welcomeMessage}\n\n⏱️ Vous avez *${timeout} minute(s)* pour accepter.`
+      : `👋 Bienvenue *${name}* !\n\nAvant de pouvoir écrire dans ce groupe, vous devez lire et accepter nos règles.${rulesPreview}\n\n⏱️ Vous avez *${timeout} minute(s)* pour accepter.`;
+
+    let sentMsg: any;
+    try {
+      sentMsg = await ctx.telegram.sendMessage(chatId, welcomeText, {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [[
+            { text: "✅ J'accepte les règles et je rejoins le groupe", callback_data: `verify:${user.id}:${groupId}` },
+          ]],
+        },
+      });
+    } catch (err) {
+      logger.error({ err }, "Impossible d'envoyer le message de vérification");
+      return;
+    }
+
+    // 3. Timer d'expulsion si pas de vérification dans le délai
+    const timer = setTimeout(async () => {
+      pendingVerifications.delete(verKey);
+      try { await ctx.telegram.deleteMessage(chatId, sentMsg.message_id); } catch {}
+      try {
+        await ctx.telegram.banChatMember(chatId, user.id);
+        await ctx.telegram.unbanChatMember(chatId, user.id); // kick sans ban permanent
+        await ctx.telegram.sendMessage(chatId,
+          `⏱️ *${name}* n'a pas accepté les règles dans le délai imparti et a été retiré du groupe.`,
+          { parse_mode: "Markdown" }
+        );
+        logger.info({ chatId, userId: user.id }, "Membre non vérifié expulsé");
+      } catch (err) {
+        logger.warn({ err }, "Expulsion du membre non vérifié échouée");
+      }
+    }, timeout * 60 * 1000);
+
+    pendingVerifications.set(verKey, { msgId: sentMsg.message_id, timer });
+
+    // Exposer la map pour que le callback_query puisse y accéder
+    (bot as any).__pendingVerifications = pendingVerifications;
+
+    logger.info({ chatId, userId: user.id, name }, "Vérification en attente");
+  });
+
   // ── Bot ajouté au groupe ─────────────────────────────────────────────────
   bot.on("my_chat_member", async (ctx) => {
     const newStatus = ctx.myChatMember?.new_chat_member?.status;

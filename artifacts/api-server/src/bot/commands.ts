@@ -78,8 +78,12 @@ function buildSettingsKeyboard(group: any) {
     { text: `${group.antiProfanity    ? "✅" : "❌"} Anti-Grossièretés`, callback_data: `toggle:antiProfanity:${group.telegramId}` },
   ]);
   rows.push([
-    { text: `${group.antiAdvertising  ? "✅" : "❌"} Anti-Publicité`,    callback_data: `toggle:antiAdvertising:${group.telegramId}` },
+    { text: `${group.antiAdvertising    ? "✅" : "❌"} Anti-Publicité`,       callback_data: `toggle:antiAdvertising:${group.telegramId}` },
+    { text: `${group.requireVerification ? "✅" : "❌"} Vérification entrée`, callback_data: `toggle:requireVerification:${group.telegramId}` },
   ]);
+  if (group.requireVerification) {
+    rows.push([{ text: `⏱️ Délai vérification : ${group.verificationTimeout} min`, callback_data: `change:verificationTimeout:${group.telegramId}` }]);
+  }
 
   // Action buttons — visible seulement si la protection est activée
   if (group.antiLinks) {
@@ -175,6 +179,9 @@ function buildSettingsText(group: any) {
     `• Anti-Liens : ${group.antiLinks ? "✅" : "❌"}${actionLine(group.antiLinks, group.antiLinksAction)}\n` +
     `• Anti-Grossièretés : ${group.antiProfanity ? "✅" : "❌"}${actionLine(group.antiProfanity, group.antiProfanityAction)}\n` +
     `• Anti-Publicité : ${group.antiAdvertising ? "✅" : "❌"}${actionLine(group.antiAdvertising, group.antiAdvertisingAction)}\n\n` +
+    `👤 *Accès au groupe :*\n` +
+    `• Vérification à l'entrée : ${group.requireVerification ? `✅ (délai : ${group.verificationTimeout} min)` : "❌"}\n` +
+    `  _${group.requireVerification ? "Les nouveaux membres doivent accepter les règles avant de pouvoir écrire." : "Les nouveaux membres peuvent écrire immédiatement."}_\n\n` +
     `📊 *Limites :*\n` +
     `• Max avertissements avant ban : ${group.maxWarnings}\n` +
     `• Durée du mute auto : ${group.muteDuration / 60} min\n` +
@@ -331,6 +338,66 @@ export function setupCommands(bot: Telegraf) {
     const action = parts[0];
     const field  = parts[1];
 
+    // ── Vérification nouveau membre (accepter les règles) ───────────────────
+    if (action === "verify") {
+      const targetUserId = parts[1];
+      const groupId      = parts.slice(2).join(":");
+      const clickerId    = ctx.from!.id.toString();
+
+      // Seul l'utilisateur concerné peut cliquer
+      if (clickerId !== targetUserId) {
+        return ctx.answerCbQuery("❌ Ce bouton n'est pas pour vous.", { show_alert: true });
+      }
+
+      await ctx.answerCbQuery("✅ Bienvenue dans le groupe !");
+
+      // Lever la restriction
+      try {
+        await ctx.telegram.restrictChatMember(Number(groupId), ctx.from!.id, {
+          permissions: {
+            can_send_messages: true,
+            can_send_audios: true,
+            can_send_documents: true,
+            can_send_photos: true,
+            can_send_videos: true,
+            can_send_video_notes: true,
+            can_send_voice_notes: true,
+            can_send_polls: true,
+            can_send_other_messages: true,
+            can_add_web_page_previews: true,
+          },
+        });
+      } catch {}
+
+      // Annuler le timer d'expulsion
+      const verKey = `${groupId}:${targetUserId}`;
+      const pending = (bot as any).__pendingVerifications?.get(verKey);
+      if (pending) {
+        clearTimeout(pending.timer);
+        (bot as any).__pendingVerifications.delete(verKey);
+      }
+
+      // Remplacer le message de vérification par un message de confirmation
+      const firstName = ctx.from!.first_name;
+      try {
+        await ctx.editMessageText(
+          `✅ *${firstName}* a accepté les règles et peut maintenant écrire dans le groupe. Bienvenue !`,
+          { parse_mode: "Markdown" }
+        );
+      } catch {}
+
+      // Auto-supprimer la confirmation après 10 secondes
+      const msgId = (ctx.callbackQuery as any).message?.message_id;
+      const chatId = ctx.chat?.id;
+      if (msgId && chatId) {
+        setTimeout(async () => {
+          try { await ctx.telegram.deleteMessage(chatId, msgId); } catch {}
+        }, 10000);
+      }
+
+      return;
+    }
+
     // ── Ouvrir les paramètres depuis le message de bienvenue ─────────────────
     if (action === "open" && field === "settings") {
       const groupId = parts.slice(2).join(":");
@@ -427,11 +494,13 @@ export function setupCommands(bot: Telegraf) {
       const updated = await db.select().from(botGroupsTable).where(eq(botGroupsTable.telegramId, groupId)).limit(1).then((r) => r[0]);
 
       const labels: Record<string, string> = {
-        isActive:      !current ? "🟢 Bot ACTIVÉ — La modération commence." : "🔴 Bot DÉSACTIVÉ — La modération est en pause.",
-        antiSpam:      `Anti-Spam ${!current ? "activé" : "désactivé"}`,
-        antiFlood:     `Anti-Flood ${!current ? "activé" : "désactivé"}`,
-        antiLinks:     `Anti-Liens ${!current ? "activé" : "désactivé"}`,
-        antiProfanity: `Anti-Grossièretés ${!current ? "activé" : "désactivé"}`,
+        isActive:             !current ? "🟢 Bot ACTIVÉ — La modération commence." : "🔴 Bot DÉSACTIVÉ — La modération est en pause.",
+        antiSpam:             `Anti-Spam ${!current ? "activé" : "désactivé"}`,
+        antiFlood:            `Anti-Flood ${!current ? "activé" : "désactivé"}`,
+        antiLinks:            `Anti-Liens ${!current ? "activé" : "désactivé"}`,
+        antiProfanity:        `Anti-Grossièretés ${!current ? "activé" : "désactivé"}`,
+        antiAdvertising:      `Anti-Publicité ${!current ? "activé" : "désactivé"} — ${!current ? "Les admins peuvent toujours poster librement." : ""}`,
+        requireVerification:  !current ? "✅ Vérification activée — Les nouveaux membres devront accepter les règles." : "❌ Vérification désactivée.",
       };
       await ctx.answerCbQuery(labels[field] ?? `${field} ${!current ? "activé" : "désactivé"}`);
       try {
@@ -455,10 +524,11 @@ export function setupCommands(bot: Telegraf) {
         messageId: (ctx.callbackQuery as any).message?.message_id,
       });
       const prompts: Record<string, string> = {
-        maxWarnings:  "⚠️ Envoyez le nouveau nombre max d'avertissements avant ban (ex: 3, 5, 10)",
-        muteDuration: "🔇 Envoyez la durée du mute en minutes (ex: 5, 30, 60)",
-        floodLimit:   "🌊 Envoyez le nombre max de messages pour le flood (ex: 5, 10)",
-        floodWindow:  "⏱️ Envoyez la fenêtre de temps en secondes pour le flood (ex: 5, 10, 30)",
+        maxWarnings:          "⚠️ Envoyez le nouveau nombre max d'avertissements avant ban (ex: 3, 5, 10)",
+        muteDuration:         "🔇 Envoyez la durée du mute en minutes (ex: 5, 30, 60)",
+        floodLimit:           "🌊 Envoyez le nombre max de messages pour le flood (ex: 5, 10)",
+        floodWindow:          "⏱️ Envoyez la fenêtre de temps en secondes pour le flood (ex: 5, 10, 30)",
+        verificationTimeout:  "⏱️ Envoyez le délai de vérification en minutes (ex: 3, 5, 10) — passé ce délai, le membre sera expulsé automatiquement s'il n'a pas accepté les règles",
       };
       await ctx.answerCbQuery();
       await ctx.reply(prompts[field] ?? `Envoyez la nouvelle valeur pour ${field}`);
