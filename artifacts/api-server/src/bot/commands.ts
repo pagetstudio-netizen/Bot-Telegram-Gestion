@@ -74,22 +74,28 @@ function buildSettingsKeyboard(group: any) {
     { text: `${group.antiFlood  ? "✅" : "❌"} Anti-Flood`,        callback_data: `toggle:antiFlood:${group.telegramId}` },
   ]);
   rows.push([
-    { text: `${group.antiLinks     ? "✅" : "❌"} Anti-Liens`,       callback_data: `toggle:antiLinks:${group.telegramId}` },
-    { text: `${group.antiProfanity ? "✅" : "❌"} Anti-Grossièretés`, callback_data: `toggle:antiProfanity:${group.telegramId}` },
+    { text: `${group.antiLinks        ? "✅" : "❌"} Anti-Liens`,       callback_data: `toggle:antiLinks:${group.telegramId}` },
+    { text: `${group.antiProfanity    ? "✅" : "❌"} Anti-Grossièretés`, callback_data: `toggle:antiProfanity:${group.telegramId}` },
+  ]);
+  rows.push([
+    { text: `${group.antiAdvertising  ? "✅" : "❌"} Anti-Publicité`,    callback_data: `toggle:antiAdvertising:${group.telegramId}` },
   ]);
 
   // Action buttons — visible seulement si la protection est activée
   if (group.antiLinks) {
-    rows.push([{ text: `⚙️ Si lien détecté → ${ACTION_LABELS[group.antiLinksAction] ?? group.antiLinksAction}`, callback_data: `actmenu:links:${group.telegramId}` }]);
+    rows.push([{ text: `⚙️ Si lien → ${ACTION_LABELS[group.antiLinksAction] ?? group.antiLinksAction}`, callback_data: `actmenu:links:${group.telegramId}` }]);
   }
   if (group.antiSpam) {
-    rows.push([{ text: `⚙️ Si spam détecté → ${ACTION_LABELS[group.antiSpamAction] ?? group.antiSpamAction}`, callback_data: `actmenu:spam:${group.telegramId}` }]);
+    rows.push([{ text: `⚙️ Si spam → ${ACTION_LABELS[group.antiSpamAction] ?? group.antiSpamAction}`, callback_data: `actmenu:spam:${group.telegramId}` }]);
   }
   if (group.antiProfanity) {
     rows.push([{ text: `⚙️ Si grossièreté → ${ACTION_LABELS[group.antiProfanityAction] ?? group.antiProfanityAction}`, callback_data: `actmenu:profanity:${group.telegramId}` }]);
   }
   if (group.antiFlood) {
     rows.push([{ text: `⚙️ Si flood → ${ACTION_LABELS[group.antiFloodAction] ?? group.antiFloodAction}`, callback_data: `actmenu:flood:${group.telegramId}` }]);
+  }
+  if (group.antiAdvertising) {
+    rows.push([{ text: `⚙️ Si publicité → ${ACTION_LABELS[group.antiAdvertisingAction] ?? group.antiAdvertisingAction}`, callback_data: `actmenu:advertising:${group.telegramId}` }]);
   }
 
   // Limites numériques
@@ -116,10 +122,11 @@ function buildSettingsKeyboard(group: any) {
 // ─── Action submenu keyboard ───────────────────────────────────────────────
 
 const ACTION_MENU_META: Record<string, { label: string; field: string }> = {
-  links:     { label: "lien détecté",    field: "antiLinksAction" },
-  spam:      { label: "spam détecté",    field: "antiSpamAction" },
-  profanity: { label: "grossièreté",     field: "antiProfanityAction" },
-  flood:     { label: "flood détecté",   field: "antiFloodAction" },
+  links:       { label: "lien détecté",       field: "antiLinksAction" },
+  spam:        { label: "spam détecté",        field: "antiSpamAction" },
+  profanity:   { label: "grossièreté",         field: "antiProfanityAction" },
+  flood:       { label: "flood détecté",       field: "antiFloodAction" },
+  advertising: { label: "publicité détectée",  field: "antiAdvertisingAction" },
 };
 
 function buildActionMenuKeyboard(menuKey: string, current: string, gid: string) {
@@ -166,7 +173,8 @@ function buildSettingsText(group: any) {
     `• Anti-Spam : ${group.antiSpam ? "✅" : "❌"}${actionLine(group.antiSpam, group.antiSpamAction)}\n` +
     `• Anti-Flood : ${group.antiFlood ? "✅" : "❌"}${actionLine(group.antiFlood, group.antiFloodAction)}\n` +
     `• Anti-Liens : ${group.antiLinks ? "✅" : "❌"}${actionLine(group.antiLinks, group.antiLinksAction)}\n` +
-    `• Anti-Grossièretés : ${group.antiProfanity ? "✅" : "❌"}${actionLine(group.antiProfanity, group.antiProfanityAction)}\n\n` +
+    `• Anti-Grossièretés : ${group.antiProfanity ? "✅" : "❌"}${actionLine(group.antiProfanity, group.antiProfanityAction)}\n` +
+    `• Anti-Publicité : ${group.antiAdvertising ? "✅" : "❌"}${actionLine(group.antiAdvertising, group.antiAdvertisingAction)}\n\n` +
     `📊 *Limites :*\n` +
     `• Max avertissements avant ban : ${group.maxWarnings}\n` +
     `• Durée du mute auto : ${group.muteDuration / 60} min\n` +

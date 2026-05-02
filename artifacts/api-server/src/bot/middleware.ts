@@ -127,10 +127,63 @@ async function applyAction(
 
 const LINK_REGEX = /(https?:\/\/|t\.me\/|bit\.ly|tinyurl\.com)/i;
 
+// Détecte les @mentions dans le texte (publicité / auto-promotion)
+const MENTION_REGEX = /@[a-zA-Z0-9_]{4,}/g;
+
+// Mots-clés publicitaires courants (FR + EN)
+const AD_KEYWORDS = [
+  // Français
+  "rejoignez", "rejoindre", "abonnez", "abonnement", "promotio", "promo",
+  "solde", "réduction", "offre", "achetez", "vendez", "vente",
+  "investissez", "investissement", "gagner de l'argent", "gagnez",
+  "crypto", "bitcoin", "trading", "forex", "signal", "pump",
+  "recrutement", "recrute", "cherche des membres", "groupe vip",
+  "canal officiel", "chaîne officielle", "lien du groupe",
+  "contactez", "contactez-moi", "dm me", "dm pour",
+  // Anglais
+  "join now", "join us", "subscribe", "click here", "buy now",
+  "earn money", "make money", "invest", "profit", "discount",
+  "limited offer", "free", "win", "giveaway", "airdrop",
+  "check my", "visit my", "follow me", "check out",
+];
+
 const PROFANITY_LIST = [
   "merde", "putain", "connard", "salope", "fdp", "enculé", "fils de pute",
   "bâtard", "conne", "idiot", "imbécile", "crétin",
 ];
+
+function isAdvertising(text: string, msg: any): { detected: boolean; reason: string } {
+  const lower = text.toLowerCase();
+
+  // 1. Message transféré depuis un canal (forward)
+  if (msg.forward_from_chat?.type === "channel" || msg.forward_from?.is_bot) {
+    return { detected: true, reason: "Message transféré depuis un canal (publicité)" };
+  }
+
+  // 2. Mentions @username dans le texte (auto-promotion)
+  const mentions = text.match(MENTION_REGEX);
+  if (mentions && mentions.length >= 1) {
+    return { detected: true, reason: `Promotion de compte : ${mentions.slice(0, 2).join(", ")}` };
+  }
+
+  // 3. Mots-clés publicitaires
+  const found = AD_KEYWORDS.find((kw) => lower.includes(kw.toLowerCase()));
+  if (found) {
+    return { detected: true, reason: `Contenu publicitaire détecté : "${found}"` };
+  }
+
+  // 4. Beaucoup de points d'exclamation / majuscules (style pub)
+  const exclamations = (text.match(/!/g) ?? []).length;
+  const upperRatio = text.replace(/[^A-ZÀ-Ü]/g, "").length / Math.max(text.replace(/\s/g, "").length, 1);
+  if (exclamations >= 3 && text.length > 20) {
+    return { detected: true, reason: "Message au style publicitaire (exclamations excessives)" };
+  }
+  if (upperRatio > 0.6 && text.length > 15) {
+    return { detected: true, reason: "Message en majuscules (style publicitaire)" };
+  }
+
+  return { detected: false, reason: "" };
+}
 
 export function setupMiddleware(bot: Telegraf) {
   bot.on("message", async (ctx, next) => {
@@ -208,6 +261,16 @@ export function setupMiddleware(bot: Telegraf) {
       if (found) {
         await applyAction(ctx as MsgContext, group.antiProfanityAction ?? "warn",
           "Langage inapproprié", groupId, group);
+        return;
+      }
+    }
+
+    // ── Anti-publicité ──────────────────────────────────────────────────────
+    if (group.antiAdvertising) {
+      const adCheck = isAdvertising(text, ctx.message);
+      if (adCheck.detected) {
+        await applyAction(ctx as MsgContext, group.antiAdvertisingAction ?? "warn",
+          adCheck.reason, groupId, group);
         return;
       }
     }
