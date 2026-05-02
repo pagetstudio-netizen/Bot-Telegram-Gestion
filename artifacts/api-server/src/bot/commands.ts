@@ -126,9 +126,14 @@ function buildSettingsKeyboard(group: any) {
   ]);
 
   // Messages personnalisés
+  const wHas = [
+    group.welcomeMessage ? "📝" : null,
+    group.welcomePhoto   ? "🖼️" : null,
+    group.welcomeButtons ? "🔘" : null,
+  ].filter(Boolean).join(" ") || "non configuré";
   rows.push([
-    { text: "✏️ Message de bienvenue", callback_data: `set:welcome:${group.telegramId}` },
-    { text: "📋 Règles du groupe",     callback_data: `set:rules:${group.telegramId}` },
+    { text: `✉️ Bienvenue (${wHas}) →`, callback_data: `welcomemenu:${group.telegramId}` },
+    { text: "📋 Règles du groupe",       callback_data: `set:rules:${group.telegramId}` },
   ]);
 
   // Langue du groupe
@@ -166,6 +171,83 @@ function buildActionMenuKeyboard(menuKey: string, current: string, gid: string) 
   ]);
   rows.push([{ text: "← Retour aux paramètres", callback_data: `back:${gid}` }]);
   return { inline_keyboard: rows };
+}
+
+// ─── Welcome sub-menu ──────────────────────────────────────────────────────
+
+function buildWelcomeMenuText(group: any) {
+  const hasText    = group.welcomeMessage ? "✅ Texte configuré" : "❌ Pas de texte (message par défaut)";
+  const hasPhoto   = group.welcomePhoto   ? "✅ Photo configurée" : "❌ Pas de photo";
+  const rawButtons = group.welcomeButtons ? (() => {
+    try {
+      const btns = JSON.parse(group.welcomeButtons) as Array<{text: string; url: string}>;
+      return `✅ ${btns.length} bouton(s) : ${btns.map(b => b.text).join(", ")}`;
+    } catch { return "⚠️ Boutons invalides"; }
+  })() : "❌ Pas de boutons";
+
+  return (
+    `✉️ *Message de bienvenue*\n\n` +
+    `📝 Texte : ${hasText}\n` +
+    `🖼️ Photo : ${hasPhoto}\n` +
+    `🔘 Boutons : ${rawButtons}\n\n` +
+    `_Variables disponibles : {name} = prénom du membre, {group} = nom du groupe_`
+  );
+}
+
+function buildWelcomeMenuKeyboard(gid: string) {
+  return {
+    inline_keyboard: [
+      [
+        { text: "📝 Modifier le texte",  callback_data: `set:welcomeText:${gid}` },
+        { text: "🖼️ Modifier la photo",  callback_data: `set:welcomePhoto:${gid}` },
+      ],
+      [{ text: "🔘 Modifier les boutons", callback_data: `set:welcomeButtons:${gid}` }],
+      [{ text: "🗑️ Tout effacer",         callback_data: `set:welcomeClear:${gid}` }],
+      [{ text: "← Retour aux paramètres", callback_data: `back:${gid}` }],
+    ],
+  };
+}
+
+// ─── Helper : envoyer le message de bienvenue (photo + texte + boutons) ────
+
+export async function sendWelcomeMessage(
+  telegram: any,
+  chatId: number,
+  group: any,
+  name: string,
+  extraButton?: { text: string; callback_data?: string; url?: string }
+) {
+  const groupName = group.title ?? "ce groupe";
+  const text = (group.welcomeMessage ?? "")
+    .replace("{name}", name)
+    .replace("{group}", groupName);
+
+  // Boutons URL définis par l'admin
+  const urlButtons: any[][] = [];
+  if (group.welcomeButtons) {
+    try {
+      const btns = JSON.parse(group.welcomeButtons) as Array<{text: string; url: string}>;
+      for (const btn of btns) {
+        if (btn.text && btn.url) urlButtons.push([{ text: btn.text, url: btn.url }]);
+      }
+    } catch {}
+  }
+
+  // Bouton extra (vérification, etc.)
+  const extraRow = extraButton ? [extraButton] : [];
+  const keyboard = urlButtons.length > 0 || extraRow.length > 0
+    ? { inline_keyboard: [...urlButtons, ...(extraRow.length ? [extraRow] : [])] }
+    : undefined;
+
+  const options: any = { parse_mode: "Markdown", ...(keyboard ? { reply_markup: keyboard } : {}) };
+
+  if (group.welcomePhoto) {
+    return telegram.sendPhoto(chatId, group.welcomePhoto, {
+      ...options,
+      caption: text || undefined,
+    });
+  }
+  return telegram.sendMessage(chatId, text || `👋 Bienvenue *${name}* !`, options);
 }
 
 function buildActionMenuText(menuKey: string, current: string) {
@@ -608,17 +690,80 @@ export function setupCommands(bot: Telegraf) {
       const field   = parts[1];
       const groupId = parts.slice(2).join(":");
       const key = ctx.from!.id.toString() + ":" + groupId;
-      pendingInputs.set(key, {
-        type: field === "welcome" ? "welcomeMessage" : "rulesText",
-        groupId,
-        chatId: ctx.chat?.id ?? 0,
-        messageId: (ctx.callbackQuery as any).message?.message_id,
-      });
+      const msgId = (ctx.callbackQuery as any).message?.message_id;
+      const pending = { groupId, chatId: ctx.chat?.id ?? 0, messageId: msgId };
+
+      // ── Sous-menu bienvenue : texte
+      if (field === "welcomeText" || field === "welcome") {
+        pendingInputs.set(key, { ...pending, type: "welcomeMessage" });
+        await ctx.answerCbQuery();
+        await ctx.reply(
+          "📝 Envoyez le texte du message de bienvenue.\n_Variables : `{name}` = prénom, `{group}` = nom du groupe_",
+          { parse_mode: "Markdown" }
+        );
+        return;
+      }
+
+      // ── Sous-menu bienvenue : photo
+      if (field === "welcomePhoto") {
+        pendingInputs.set(key, { ...pending, type: "welcomePhoto" });
+        await ctx.answerCbQuery();
+        await ctx.reply("🖼️ Envoyez la photo à utiliser comme image de bienvenue (envoyez juste la photo).");
+        return;
+      }
+
+      // ── Sous-menu bienvenue : boutons
+      if (field === "welcomeButtons") {
+        pendingInputs.set(key, { ...pending, type: "welcomeButtons" });
+        await ctx.answerCbQuery();
+        await ctx.reply(
+          "🔘 Envoyez vos boutons, un par ligne, au format :\n`Texte du bouton | https://url.com`\n\nExemple :\n`Notre canal | https://t.me/mon_canal\nSite web | https://monsite.com`",
+          { parse_mode: "Markdown" }
+        );
+        return;
+      }
+
+      // ── Sous-menu bienvenue : tout effacer
+      if (field === "welcomeClear") {
+        await db.update(botGroupsTable)
+          .set({ welcomeMessage: null, welcomePhoto: null, welcomeButtons: null, updatedAt: new Date() })
+          .where(eq(botGroupsTable.telegramId, groupId));
+        const updated = await db.select().from(botGroupsTable).where(eq(botGroupsTable.telegramId, groupId)).limit(1).then((r) => r[0]);
+        await ctx.answerCbQuery("🗑️ Message de bienvenue effacé.");
+        if (updated && msgId) {
+          try {
+            await ctx.telegram.editMessageText(ctx.chat?.id ?? 0, msgId, undefined, buildWelcomeMenuText(updated), {
+              parse_mode: "Markdown", reply_markup: buildWelcomeMenuKeyboard(groupId),
+            });
+          } catch {}
+        }
+        return;
+      }
+
+      // ── Règles du groupe
+      if (field === "rules") {
+        pendingInputs.set(key, { ...pending, type: "rulesText" });
+        await ctx.answerCbQuery();
+        await ctx.reply("📋 Envoyez les règles du groupe (plusieurs lignes autorisées).");
+        return;
+      }
+
       await ctx.answerCbQuery();
-      const prompt = field === "welcome"
-        ? "✏️ Envoyez le nouveau message de bienvenue.\nVariables : `{name}` = prénom, `{group}` = nom du groupe"
-        : "📋 Envoyez les règles du groupe (plusieurs lignes autorisées)";
-      await ctx.reply(prompt, { parse_mode: "Markdown" });
+      return;
+    }
+
+    // ── Ouvrir le sous-menu bienvenue ─────────────────────────────────────────
+    if (action === "welcomemenu") {
+      if (!(await isAdmin(ctx))) return ctx.answerCbQuery("❌ Réservé aux administrateurs.");
+      const groupId = parts.slice(1).join(":");
+      const group = await db.select().from(botGroupsTable).where(eq(botGroupsTable.telegramId, groupId)).limit(1).then((r) => r[0]);
+      if (!group) return ctx.answerCbQuery("❌ Groupe introuvable.");
+      await ctx.answerCbQuery();
+      try {
+        await ctx.editMessageText(buildWelcomeMenuText(group), {
+          parse_mode: "Markdown", reply_markup: buildWelcomeMenuKeyboard(groupId),
+        });
+      } catch {}
       return;
     }
 
@@ -671,14 +816,58 @@ export function setupCommands(bot: Telegraf) {
         } catch {}
       }
 
-    } else if (pending.type === "welcomeMessage" || pending.type === "rulesText") {
+    } else if (pending.type === "welcomeMessage") {
       await db.update(botGroupsTable)
-        .set({ [pending.type]: value, updatedAt: new Date() })
+        .set({ welcomeMessage: value, updatedAt: new Date() })
         .where(eq(botGroupsTable.telegramId, pending.groupId));
-
       const updated = await db.select().from(botGroupsTable).where(eq(botGroupsTable.telegramId, pending.groupId)).limit(1).then((r) => r[0]);
-      const label = pending.type === "welcomeMessage" ? "Message de bienvenue" : "Règles du groupe";
-      await ctx.reply(`✅ *${label} mis à jour !*`, { parse_mode: "Markdown" });
+      await ctx.reply("✅ *Texte de bienvenue mis à jour !*", { parse_mode: "Markdown" });
+      if (updated && pending.chatId && pending.messageId) {
+        try {
+          await ctx.telegram.editMessageText(pending.chatId, pending.messageId, undefined, buildWelcomeMenuText(updated), {
+            parse_mode: "Markdown", reply_markup: buildWelcomeMenuKeyboard(pending.groupId),
+          });
+        } catch {}
+      }
+
+    } else if (pending.type === "welcomeButtons") {
+      // Parser les lignes "Texte | URL"
+      const lines = value.split("\n").map((l) => l.trim()).filter(Boolean);
+      const buttons: Array<{text: string; url: string}> = [];
+      const errors: string[] = [];
+      for (const line of lines) {
+        const sep = line.indexOf("|");
+        if (sep === -1) { errors.push(line); continue; }
+        const btnText = line.slice(0, sep).trim();
+        const btnUrl  = line.slice(sep + 1).trim();
+        if (!btnText || !btnUrl.match(/^https?:\/\//i)) { errors.push(line); continue; }
+        buttons.push({ text: btnText, url: btnUrl });
+      }
+      if (errors.length > 0 && buttons.length === 0) {
+        return ctx.reply(`❌ Format invalide. Utilisez :\n\`Texte | https://url.com\`\n\nLignes ignorées :\n${errors.map(e => `• ${e}`).join("\n")}`, { parse_mode: "Markdown" });
+      }
+      await db.update(botGroupsTable)
+        .set({ welcomeButtons: JSON.stringify(buttons), updatedAt: new Date() })
+        .where(eq(botGroupsTable.telegramId, pending.groupId));
+      const updated = await db.select().from(botGroupsTable).where(eq(botGroupsTable.telegramId, pending.groupId)).limit(1).then((r) => r[0]);
+      await ctx.reply(
+        `✅ *${buttons.length} bouton(s) enregistré(s) !*${errors.length > 0 ? `\n⚠️ ${errors.length} ligne(s) ignorée(s) (format invalide).` : ""}`,
+        { parse_mode: "Markdown" }
+      );
+      if (updated && pending.chatId && pending.messageId) {
+        try {
+          await ctx.telegram.editMessageText(pending.chatId, pending.messageId, undefined, buildWelcomeMenuText(updated), {
+            parse_mode: "Markdown", reply_markup: buildWelcomeMenuKeyboard(pending.groupId),
+          });
+        } catch {}
+      }
+
+    } else if (pending.type === "rulesText") {
+      await db.update(botGroupsTable)
+        .set({ rulesText: value, updatedAt: new Date() })
+        .where(eq(botGroupsTable.telegramId, pending.groupId));
+      const updated = await db.select().from(botGroupsTable).where(eq(botGroupsTable.telegramId, pending.groupId)).limit(1).then((r) => r[0]);
+      await ctx.reply("✅ *Règles du groupe mises à jour !*", { parse_mode: "Markdown" });
       if (updated && pending.chatId && pending.messageId) {
         try {
           await ctx.telegram.editMessageText(pending.chatId, pending.messageId, undefined, buildSettingsText(updated), {
@@ -686,6 +875,43 @@ export function setupCommands(bot: Telegraf) {
           });
         } catch {}
       }
+    }
+  });
+
+  // ─── Réception de photo (bienvenue) ───────────────────────────────────────
+  bot.on("photo", async (ctx, next) => {
+    let pendingKey: string | null = null;
+    let pending: { type: string; groupId: string; chatId: number; messageId?: number } | null = null;
+
+    for (const [k, v] of pendingInputs.entries()) {
+      if (k.startsWith(ctx.from!.id.toString() + ":") && v.type === "welcomePhoto") {
+        pendingKey = k;
+        pending = v;
+        break;
+      }
+    }
+
+    if (!pending || !pendingKey) return next();
+    pendingInputs.delete(pendingKey);
+
+    // Prendre la plus grande résolution de la photo
+    const photos = (ctx.message as any).photo as Array<{ file_id: string; file_unique_id: string; width: number; height: number }>;
+    const fileId = photos[photos.length - 1]?.file_id;
+    if (!fileId) return ctx.reply("❌ Photo introuvable, réessayez.");
+
+    await db.update(botGroupsTable)
+      .set({ welcomePhoto: fileId, updatedAt: new Date() })
+      .where(eq(botGroupsTable.telegramId, pending.groupId));
+
+    const updated = await db.select().from(botGroupsTable).where(eq(botGroupsTable.telegramId, pending.groupId)).limit(1).then((r) => r[0]);
+    await ctx.reply("✅ *Photo de bienvenue enregistrée !*", { parse_mode: "Markdown" });
+
+    if (updated && pending.chatId && pending.messageId) {
+      try {
+        await ctx.telegram.editMessageText(pending.chatId, pending.messageId, undefined, buildWelcomeMenuText(updated), {
+          parse_mode: "Markdown", reply_markup: buildWelcomeMenuKeyboard(pending.groupId),
+        });
+      } catch {}
     }
   });
 
@@ -1140,15 +1366,20 @@ export function setupCommands(bot: Telegraf) {
   bot.on("new_chat_members", async (ctx) => {
     const group = await ensureGroup(ctx.chat.id, ctx.chat.title ?? "Groupe");
     if (!group?.requireVerification) {
-      // Pas de vérification : envoyer le message de bienvenue normal
+      // Pas de vérification : envoyer le message de bienvenue enrichi
       for (const member of ctx.message.new_chat_members) {
         if (member.is_bot) continue;
         const name = member.first_name;
         const glang = group?.language ?? "fr";
-        const welcomeText = group?.welcomeMessage
-          ? group.welcomeMessage.replace("{name}", name).replace("{group}", ctx.chat.title ?? "ce groupe")
-          : t(glang, "welcome_default", { name });
-        await ctx.reply(welcomeText, { parse_mode: "Markdown" });
+        // Si aucun message configuré, utiliser la traduction par défaut
+        const effectiveGroup = group?.welcomeMessage || group?.welcomePhoto
+          ? group
+          : { ...group, welcomeMessage: t(glang, "welcome_default", { name }) };
+        try {
+          await sendWelcomeMessage(ctx.telegram, ctx.chat.id, effectiveGroup, name);
+        } catch (err) {
+          logger.error({ err }, "Failed to send welcome message");
+        }
       }
     }
     // Si vérification activée, le handler chat_member dans middleware.ts gère tout

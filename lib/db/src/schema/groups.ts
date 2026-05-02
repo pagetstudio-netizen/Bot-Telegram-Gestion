@@ -21,6 +21,8 @@ export const botGroupsTable = pgTable("bot_groups", {
   verificationTimeout: integer("verification_timeout").notNull().default(5),
   language: text("language").notNull().default("fr"),
   welcomeMessage: text("welcome_message"),
+  welcomePhoto: text("welcome_photo"),
+  welcomeButtons: text("welcome_buttons"),
   rulesText: text("rules_text"),
   maxWarnings: integer("max_warnings").notNull().default(3),
   muteDuration: integer("mute_duration").notNull().default(300),

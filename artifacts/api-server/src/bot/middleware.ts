@@ -10,7 +10,7 @@ import {
 } from "@workspace/db";
 import { eq, and, count } from "drizzle-orm";
 import { logger } from "../lib/logger";
-import { ensureGroup } from "./commands";
+import { ensureGroup, sendWelcomeMessage } from "./commands";
 import { t } from "./translations";
 
 type MsgContext = NarrowedContext<Context, Update.MessageUpdate>;
@@ -393,24 +393,20 @@ export function setupMiddleware(bot: Telegraf) {
     const timeout = group.verificationTimeout ?? 5;
     const glang = group.language ?? "fr";
 
-    const welcomeText = group.welcomeMessage
-      ? `${group.welcomeMessage}\n\n⏱️ ${timeout} min`
-      : t(glang, "verify_intro", {
-          name,
-          rules: rulesPreview,
-          timeout,
-        });
+    // Texte par défaut si aucun message personnalisé
+    const verifyGroupOverride = group.welcomeMessage
+      ? { ...group, welcomeMessage: `${group.welcomeMessage}\n\n${rulesPreview}\n\n⏱️ *${timeout} min*` }
+      : { ...group, welcomeMessage: t(glang, "verify_intro", { name, rules: rulesPreview, timeout }) };
 
     let sentMsg: any;
     try {
-      sentMsg = await ctx.telegram.sendMessage(chatId, welcomeText, {
-        parse_mode: "Markdown",
-        reply_markup: {
-          inline_keyboard: [[
-            { text: t(glang, "verify_button"), callback_data: `verify:${user.id}:${groupId}` },
-          ]],
-        },
-      });
+      sentMsg = await sendWelcomeMessage(
+        ctx.telegram,
+        chatId,
+        verifyGroupOverride,
+        name,
+        { text: t(glang, "verify_button"), callback_data: `verify:${user.id}:${groupId}` }
+      );
     } catch (err) {
       logger.error({ err }, "Impossible d'envoyer le message de vérification");
       return;
