@@ -711,11 +711,10 @@ export function setupCommands(bot: Telegraf) {
 
     for (const member of newMembers) {
       if (member.is_bot) continue;
-      if (!group?.isActive) continue;
       const name = member.first_name;
       const welcomeText = group?.welcomeMessage
         ? group.welcomeMessage.replace("{name}", name).replace("{group}", ctx.chat.title ?? "ce groupe")
-        : `👋 Bienvenue *${name}* dans le groupe ! Tapez /rules pour lire les règles.`;
+        : `👋 Bienvenue *${name}* dans le groupe !`;
       await ctx.reply(welcomeText, { parse_mode: "Markdown" });
     }
   });
@@ -724,9 +723,6 @@ export function setupCommands(bot: Telegraf) {
   bot.on("left_chat_member", async (ctx) => {
     const member = ctx.message.left_chat_member;
     if (member.is_bot) return;
-    const group = await db.select().from(botGroupsTable)
-      .where(eq(botGroupsTable.telegramId, getGroupId(ctx.chat.id))).limit(1);
-    if (!group[0]?.isActive) return;
     await ctx.reply(`👋 Au revoir *${member.first_name}* !`, { parse_mode: "Markdown" });
   });
 
