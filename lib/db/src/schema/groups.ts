@@ -24,6 +24,8 @@ export const botGroupsTable = pgTable("bot_groups", {
   welcomePhoto: text("welcome_photo"),
   welcomeButtons: text("welcome_buttons"),
   rulesText: text("rules_text"),
+  requiredChannel: text("required_channel"),
+  requiredChannelTitle: text("required_channel_title"),
   maxWarnings: integer("max_warnings").notNull().default(3),
   muteDuration: integer("mute_duration").notNull().default(300),
   floodLimit: integer("flood_limit").notNull().default(5),
