@@ -32,6 +32,25 @@ export async function startBot() {
     setupMiddleware(bot);
     setupCommands(bot);
 
+    // Enregistre le menu de commandes visible dans Telegram
+    await bot.telegram.setMyCommands([
+      { command: "settings",  description: "⚙️ Paramètres & activation du bot" },
+      { command: "help",      description: "❓ Liste de toutes les commandes" },
+      { command: "rules",     description: "📋 Afficher les règles du groupe" },
+      { command: "stats",     description: "📊 Statistiques du groupe" },
+      { command: "warn",      description: "⚠️ Avertir un membre (répondre au msg)" },
+      { command: "unwarn",    description: "✅ Retirer le dernier avertissement" },
+      { command: "warnings",  description: "🔢 Voir les avertissements d'un membre" },
+      { command: "mute",      description: "🔇 Rendre muet (répondre au msg) [minutes]" },
+      { command: "unmute",    description: "🔊 Lever le silence (répondre au msg)" },
+      { command: "kick",      description: "👢 Expulser un membre (répondre au msg)" },
+      { command: "ban",       description: "🔨 Bannir un membre (répondre au msg)" },
+      { command: "unban",     description: "🔓 Débannir un membre (répondre au msg)" },
+      { command: "setwelcome", description: "✏️ Définir le message de bienvenue" },
+      { command: "setrules",  description: "📝 Définir les règles du groupe" },
+    ]);
+    logger.info("Bot commands menu registered with Telegram");
+
     bot.catch((err: unknown, ctx: Context) => {
       logger.error({ err, update: ctx.update }, "Bot error");
     });
