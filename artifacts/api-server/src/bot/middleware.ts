@@ -10,10 +10,11 @@ import {
 } from "@workspace/db";
 import { eq, and, count } from "drizzle-orm";
 import { logger } from "../lib/logger";
+import { ensureGroup } from "./commands";
 
 type MsgContext = NarrowedContext<Context, Update.MessageUpdate>;
 
-const floodMap = new Map<string, { count: number; windowStart: number }>();
+const floodMap = new Map<string, { count: number; windowStart: number; text?: string }>();
 
 async function getGroup(chatId: number) {
   return db
@@ -54,8 +55,8 @@ async function muteUser(ctx: MsgContext, userId: number, seconds: number, groupI
     await logViolation(
       groupId,
       userId.toString(),
-      ctx.from?.username ?? null,
-      ctx.from?.first_name ?? "Inconnu",
+      (ctx as any).from?.username ?? null,
+      (ctx as any).from?.first_name ?? "Inconnu",
       reason,
       "mute",
       `Muet auto ${Math.round(seconds / 60)} min`
@@ -66,9 +67,8 @@ async function muteUser(ctx: MsgContext, userId: number, seconds: number, groupI
 }
 
 async function deleteAndWarn(ctx: MsgContext, reason: string, groupId: string, group: any) {
-  try {
-    await ctx.deleteMessage();
-  } catch {}
+  try { await ctx.deleteMessage(); } catch {}
+
   const userId = ctx.from!.id.toString();
   const username = ctx.from?.username ?? null;
   const firstName = ctx.from?.first_name ?? "Inconnu";
@@ -96,9 +96,7 @@ async function deleteAndWarn(ctx: MsgContext, reason: string, groupId: string, g
   );
 
   setTimeout(async () => {
-    try {
-      await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
-    } catch {}
+    try { await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id); } catch {}
   }, 8000);
 
   if (Number(totalWarns) >= maxWarnings) {
@@ -122,7 +120,7 @@ async function deleteAndWarn(ctx: MsgContext, reason: string, groupId: string, g
   }
 }
 
-const LINK_REGEX = /(https?:\/\/|t\.me\/|@\w{5,}|bit\.ly|tinyurl)/i;
+const LINK_REGEX = /(https?:\/\/|t\.me\/|bit\.ly|tinyurl\.com)/i;
 
 const PROFANITY_LIST = [
   "merde", "putain", "connard", "salope", "fdp", "enculé", "fils de pute",
@@ -144,15 +142,15 @@ export function setupMiddleware(bot: Telegraf) {
     const group = await getGroup(ctx.chat.id);
     if (!group) return next();
 
-    // Check if admin - skip moderation for admins
+    // Skip moderation for admins
     try {
       const member = await ctx.telegram.getChatMember(ctx.chat.id, userId);
       if (["administrator", "creator"].includes(member.status)) return next();
     } catch {}
 
-    // Anti-flood
+    // ── Anti-flood ──────────────────────────────────────────────────────────
     if (group.antiFlood) {
-      const floodKey = `${groupId}:${userId}`;
+      const floodKey = `${groupId}:${userId}:flood`;
       const now = Date.now();
       const flood = floodMap.get(floodKey);
 
@@ -164,10 +162,12 @@ export function setupMiddleware(bot: Telegraf) {
             try { await ctx.deleteMessage(); } catch {}
             if (flood.count === group.floodLimit + 1) {
               await muteUser(ctx as MsgContext, userId, group.muteDuration, groupId, "flood");
-              await logViolation(groupId, userId.toString(), username, firstName, "flood", "mute", `Flood: ${flood.count} msgs en ${group.floodWindow}s`);
-              const m = await ctx.reply(`🔇 *${firstName}* : Trop de messages ! Silence ${group.muteDuration / 60} min.`, {
-                parse_mode: "Markdown",
-              });
+              await logViolation(groupId, userId.toString(), username, firstName, "flood", "mute",
+                `Flood: ${flood.count} msgs en ${group.floodWindow}s`);
+              const m = await ctx.reply(
+                `🔇 *${firstName}* : Trop de messages ! Silence ${group.muteDuration / 60} min.`,
+                { parse_mode: "Markdown" }
+              );
               setTimeout(async () => { try { await ctx.telegram.deleteMessage(ctx.chat.id, m.message_id); } catch {} }, 8000);
             }
             return;
@@ -180,29 +180,27 @@ export function setupMiddleware(bot: Telegraf) {
       }
     }
 
-    // Anti-spam (duplicate messages)
+    // ── Anti-spam (messages dupliqués) ──────────────────────────────────────
     if (group.antiSpam && text.length > 0) {
-      const spamKey = `${groupId}:${userId}:last`;
+      const spamKey = `${groupId}:${userId}:spam`;
       const last = floodMap.get(spamKey);
-      if (last && (last as any).text === text) {
+      if (last?.text === text) {
         try { await ctx.deleteMessage(); } catch {}
         await logViolation(groupId, userId.toString(), username, firstName, "spam", "delete", "Message dupliqué");
-        const m = await ctx.reply(`🚫 *${firstName}* : Messages dupliqués interdits !`, {
-          parse_mode: "Markdown",
-        });
+        const m = await ctx.reply(`🚫 *${firstName}* : Messages dupliqués interdits !`, { parse_mode: "Markdown" });
         setTimeout(async () => { try { await ctx.telegram.deleteMessage(ctx.chat.id, m.message_id); } catch {} }, 5000);
         return;
       }
-      floodMap.set(spamKey, { count: 0, windowStart: Date.now(), ...(last ?? {}), text } as any);
+      floodMap.set(spamKey, { count: 0, windowStart: Date.now(), text });
     }
 
-    // Anti-links
-    if (group.antiLinks && LINK_REGEX.test(text)) {
+    // ── Anti-liens ──────────────────────────────────────────────────────────
+    if (group.antiLinks && text && LINK_REGEX.test(text)) {
       await deleteAndWarn(ctx as MsgContext, "Liens non autorisés dans ce groupe", groupId, group);
       return;
     }
 
-    // Anti-profanity
+    // ── Anti-profanité ──────────────────────────────────────────────────────
     if (group.antiProfanity && text) {
       const lowerText = text.toLowerCase();
       const found = PROFANITY_LIST.find((word) => lowerText.includes(word));
@@ -212,7 +210,7 @@ export function setupMiddleware(bot: Telegraf) {
       }
     }
 
-    // Word filters
+    // ── Filtres de mots personnalisés ───────────────────────────────────────
     if (text) {
       const filters = await db
         .select()
@@ -253,20 +251,39 @@ export function setupMiddleware(bot: Telegraf) {
     return next();
   });
 
-  // Ensure group is registered when bot joins
+  // ── Bot ajouté au groupe : message de configuration ─────────────────────
   bot.on("my_chat_member", async (ctx) => {
     const newStatus = ctx.myChatMember?.new_chat_member?.status;
-    if (newStatus === "member" || newStatus === "administrator") {
-      if (ctx.chat.type !== "private") {
-        await db
-          .insert(botGroupsTable)
-          .values({
-            telegramId: ctx.chat.id.toString(),
-            title: (ctx.chat as any).title ?? "Groupe",
-          })
-          .onConflictDoNothing();
-        logger.info({ chatId: ctx.chat.id }, "Bot added to group");
-      }
+
+    if ((newStatus === "member" || newStatus === "administrator") && ctx.chat.type !== "private") {
+      const chatId = ctx.chat.id;
+      const title = (ctx.chat as any).title ?? "Groupe";
+
+      await ensureGroup(chatId, title);
+
+      // Message de bienvenue + instructions
+      const isAdmin = newStatus === "administrator";
+
+      await ctx.telegram.sendMessage(
+        chatId,
+        `🤖 *Bot Modérateur activé dans "${title}" !*\n\n` +
+          (isAdmin
+            ? `✅ J'ai les droits d'administrateur — la modération est active.\n\n`
+            : `⚠️ *Je n'ai pas encore les droits d'administrateur.*\nDonnez-moi les droits d'admin pour activer la modération.\n\n`) +
+          `⚙️ *Pour configurer ce groupe :*\n` +
+          `• Tapez /settings pour les paramètres de modération\n` +
+          `• Tapez /setwelcome [texte] pour le message de bienvenue\n` +
+          `• Tapez /setrules [texte] pour définir les règles\n\n` +
+          `🛡️ *Protection disponible :*\n` +
+          `• Anti-spam & anti-flood\n` +
+          `• Anti-liens & anti-grossièretés\n` +
+          `• Filtres de mots personnalisés\n` +
+          `• Avertissements automatiques avec /warn\n\n` +
+          `Tapez /help pour la liste complète des commandes.`,
+        { parse_mode: "Markdown" }
+      );
+
+      logger.info({ chatId, title, isAdmin }, "Bot added to group — welcome message sent");
     }
   });
 
