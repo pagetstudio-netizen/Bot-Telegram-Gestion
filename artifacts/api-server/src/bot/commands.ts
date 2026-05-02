@@ -451,6 +451,7 @@ export function setupCommands(bot: Telegraf) {
   // /stats
   bot.command("stats", async (ctx) => {
     if (ctx.chat.type === "private") return;
+    if (!(await isAdmin(ctx))) return ctx.reply("❌ Réservé aux administrateurs.");
     const groupId = getGroupId(ctx.chat.id);
     const [warnCount] = await db.select({ count: count() }).from(botWarningsTable).where(eq(botWarningsTable.telegramGroupId, groupId));
     const [banCount]  = await db.select({ count: count() }).from(botBansTable).where(and(eq(botBansTable.telegramGroupId, groupId), eq(botBansTable.unbannedAt, null as any)));
@@ -469,20 +470,13 @@ export function setupCommands(bot: Telegraf) {
     const data = (ctx.callbackQuery as any).data as string;
     if (!data) return ctx.answerCbQuery();
 
-    // Vérification admin
-    if (ctx.chat && ctx.chat.type !== "private") {
-      const member = await ctx.telegram.getChatMember(ctx.chat.id, ctx.from!.id).catch(() => null);
-      if (!member || !["administrator", "creator"].includes(member.status)) {
-        return ctx.answerCbQuery("❌ Seuls les administrateurs peuvent modifier les paramètres.");
-      }
-    }
-
     // Parse : action:field:groupId  ou  action:groupId  (pour done/back)
     const parts = data.split(":");
     const action = parts[0];
     const field  = parts[1];
 
-    // ── Vérification nouveau membre (accepter les règles) ───────────────────
+    // ── Vérification nouveau membre (accepter les règles) ─────────────────
+    // Ce callback est public : n'importe quel membre peut cliquer sur "J'accepte"
     if (action === "verify") {
       const targetUserId = parts[1];
       const groupId      = parts.slice(2).join(":");
@@ -546,6 +540,14 @@ export function setupCommands(bot: Telegraf) {
       }
 
       return;
+    }
+
+    // ── Guard admin pour tous les autres callbacks (paramètres, modération) ──
+    if (ctx.chat && ctx.chat.type !== "private") {
+      const member = await ctx.telegram.getChatMember(ctx.chat.id, ctx.from!.id).catch(() => null);
+      if (!member || !["administrator", "creator"].includes(member.status)) {
+        return ctx.answerCbQuery("❌ Seuls les administrateurs peuvent modifier les paramètres.", { show_alert: true });
+      }
     }
 
     // ── Ouvrir les paramètres depuis le message de bienvenue ─────────────────
@@ -1118,6 +1120,7 @@ export function setupCommands(bot: Telegraf) {
   // ─── /warnings ────────────────────────────────────────────────────────────
   bot.command("warnings", async (ctx) => {
     if (ctx.chat.type === "private") return;
+    if (!(await isAdmin(ctx))) return ctx.reply("❌ Réservé aux administrateurs.");
     const target  = ctx.message.reply_to_message?.from ?? ctx.from;
     if (!target) return;
     const groupId = getGroupId(ctx.chat.id);
