@@ -35,6 +35,40 @@ async function logViolation(
   });
 }
 
+// ─── Auto-ban avec message d'erreur visible ───────────────────────────────
+
+async function autoBan(
+  ctx: MsgContext,
+  userId: number,
+  userIdStr: string,
+  username: string | null,
+  firstName: string,
+  groupId: string,
+  maxWarnings: number
+) {
+  try {
+    await ctx.telegram.banChatMember(ctx.chat.id, userId);
+    await db.insert(botBansTable).values({
+      telegramGroupId: groupId, telegramUserId: userIdStr,
+      username, firstName,
+      reason: `Auto-ban après ${maxWarnings} avertissements`, bannedByUserId: "bot",
+    });
+    await logViolation(groupId, userIdStr, username, firstName, "auto_ban", "ban",
+      `Auto-ban après ${maxWarnings} avertissements`);
+    await ctx.reply(`🔨 *${firstName}* a été banni automatiquement après ${maxWarnings} avertissements.`, { parse_mode: "Markdown" });
+  } catch (err) {
+    logger.error({ err }, "Auto-ban failed");
+    // Erreur visible dans le groupe : le bot n'a pas les droits suffisants
+    try {
+      await ctx.reply(
+        `⚠️ *Impossible de bannir ${firstName}.*\n\nLe bot ne dispose pas du droit *"Bannir des membres"*.\n\n` +
+        `👉 Allez dans *Gérer le groupe → Administrateurs → ${ctx.botInfo?.first_name ?? "Bot"}* et activez la permission *"Bannir des utilisateurs"*.`,
+        { parse_mode: "Markdown" }
+      );
+    } catch {}
+  }
+}
+
 // ─── Appliquer une action (delete / warn / mute / ban) ────────────────────
 
 async function applyAction(
@@ -58,36 +92,39 @@ async function applyAction(
   }
 
   if (actionType === "warn") {
+    const maxWarnings = group.maxWarnings ?? 3;
+
+    // Compter les avertissements AVANT d'en insérer un nouveau
+    const [{ count: existingWarns }] = await db
+      .select({ count: count() })
+      .from(botWarningsTable)
+      .where(and(eq(botWarningsTable.telegramGroupId, groupId), eq(botWarningsTable.telegramUserId, userIdStr)));
+
+    // Si déjà au max ou au-delà → passer directement au ban sans ajouter un nouveau warn
+    if (Number(existingWarns) >= maxWarnings) {
+      await autoBan(ctx, userId, userIdStr, username, firstName, groupId, maxWarnings);
+      return;
+    }
+
+    // Insérer l'avertissement
     await db.insert(botWarningsTable).values({
       telegramGroupId: groupId, telegramUserId: userIdStr,
       username, firstName, reason, warnedByUserId: "bot",
     });
     await logViolation(groupId, userIdStr, username, firstName, "auto_warning", "warn", reason);
 
-    const [{ count: totalWarns }] = await db
-      .select({ count: count() })
-      .from(botWarningsTable)
-      .where(and(eq(botWarningsTable.telegramGroupId, groupId), eq(botWarningsTable.telegramUserId, userIdStr)));
+    const totalWarns = Number(existingWarns) + 1;
 
-    const maxWarnings = group.maxWarnings ?? 3;
+    // Afficher le compteur
     const msg = await ctx.reply(
       `⚠️ *${firstName}* : ${reason}\n🔢 Avertissement ${totalWarns}/${maxWarnings}`,
       { parse_mode: "Markdown" }
     );
     setTimeout(async () => { try { await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id); } catch {} }, 8000);
 
-    if (Number(totalWarns) >= maxWarnings) {
-      try {
-        await ctx.telegram.banChatMember(ctx.chat.id, userId);
-        await db.insert(botBansTable).values({
-          telegramGroupId: groupId, telegramUserId: userIdStr,
-          username, firstName,
-          reason: `Auto-ban après ${maxWarnings} avertissements`, bannedByUserId: "bot",
-        });
-        await logViolation(groupId, userIdStr, username, firstName, "auto_ban", "ban",
-          `Auto-ban après ${maxWarnings} avertissements`);
-        await ctx.reply(`🔨 *${firstName}* banni après ${maxWarnings} avertissements.`, { parse_mode: "Markdown" });
-      } catch (err) { logger.error({ err }, "Auto-ban failed"); }
+    // Si le max est atteint → bannir
+    if (totalWarns >= maxWarnings) {
+      await autoBan(ctx, userId, userIdStr, username, firstName, groupId, maxWarnings);
     }
     return;
   }

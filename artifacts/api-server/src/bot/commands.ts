@@ -1,6 +1,6 @@
 import { Telegraf } from "telegraf";
 import { db } from "@workspace/db";
-import { botGroupsTable, botWarningsTable, botBansTable, botViolationsTable } from "@workspace/db";
+import { botGroupsTable, botWarningsTable, botBansTable, botViolationsTable, botWordFiltersTable } from "@workspace/db";
 import { eq, and, count } from "drizzle-orm";
 import { logger } from "../lib/logger";
 
@@ -232,6 +232,9 @@ export function setupCommands(bot: Telegraf) {
         "/kick (répondre) — Expulser\n" +
         "/mute (répondre) [minutes] — Rendre muet\n" +
         "/unmute (répondre) — Lever le silence\n\n" +
+        "🔤 *Filtres de mots (admins) :*\n" +
+        "/filter mot [action] — Ajouter un mot interdit (actions : delete, warn, mute, ban)\n" +
+        "/filters — Voir et gérer tous les filtres\n\n" +
         "📊 *Informations :*\n" +
         "/warnings (répondre) — Voir les avertissements\n" +
         "/rules — Afficher les règles\n" +
@@ -629,10 +632,35 @@ export function setupCommands(bot: Telegraf) {
     if (!target) return ctx.reply("↩️ Répondez au message d'un utilisateur pour l'avertir.");
     if (target.is_bot) return ctx.reply("❌ Impossible d'avertir un bot.");
 
-    const reason = ctx.message.text.split(" ").slice(1).join(" ") || "Comportement inapproprié";
+    const reason  = ctx.message.text.split(" ").slice(1).join(" ") || "Comportement inapproprié";
     const groupId = getGroupId(ctx.chat.id);
     const userId  = getUserId(target.id);
     await ensureGroup(ctx.chat.id, ctx.chat.title ?? "Groupe");
+
+    const group = await db.select().from(botGroupsTable).where(eq(botGroupsTable.telegramId, groupId)).limit(1);
+    const maxWarnings = group[0]?.maxWarnings ?? 3;
+
+    // Compter AVANT d'insérer
+    const [{ count: existingWarns }] = await db.select({ count: count() }).from(botWarningsTable)
+      .where(and(eq(botWarningsTable.telegramGroupId, groupId), eq(botWarningsTable.telegramUserId, userId)));
+    const existing = Number(existingWarns);
+
+    // Déjà au max → ban direct sans ajouter un nouvel avertissement
+    if (existing >= maxWarnings) {
+      try {
+        await ctx.telegram.banChatMember(ctx.chat.id, target.id);
+        await db.insert(botBansTable).values({
+          telegramGroupId: groupId, telegramUserId: userId,
+          username: target.username ?? null, firstName: target.first_name,
+          reason: `Banni par admin après ${maxWarnings} avertissements`, bannedByUserId: getUserId(ctx.from!.id),
+        });
+        await ctx.reply(`🔨 *${target.first_name}* banni (max d'avertissements déjà atteint).`, { parse_mode: "Markdown" });
+      } catch (err) {
+        logger.error({ err }, "Manual ban failed");
+        await ctx.reply(`⚠️ Impossible de bannir *${target.first_name}*. Vérifiez que le bot a le droit *"Bannir des membres"*.`, { parse_mode: "Markdown" });
+      }
+      return;
+    }
 
     await db.insert(botWarningsTable).values({
       telegramGroupId: groupId, telegramUserId: userId,
@@ -645,12 +673,10 @@ export function setupCommands(bot: Telegraf) {
       violationType: "warning", action: "warn", details: reason,
     });
 
-    const [{ count: totalWarns }] = await db.select({ count: count() }).from(botWarningsTable)
-      .where(and(eq(botWarningsTable.telegramGroupId, groupId), eq(botWarningsTable.telegramUserId, userId)));
-    const group = await db.select().from(botGroupsTable).where(eq(botGroupsTable.telegramId, groupId)).limit(1);
-    const maxWarnings = group[0]?.maxWarnings ?? 3;
+    const totalWarns = existing + 1;
 
-    if (Number(totalWarns) >= maxWarnings) {
+    if (totalWarns >= maxWarnings) {
+      await ctx.reply(`⚠️ *Avertissement* pour *${target.first_name}*\n📝 ${reason}\n🔢 ${totalWarns}/${maxWarnings} — *Ban automatique en cours...*`, { parse_mode: "Markdown" });
       try {
         await ctx.telegram.banChatMember(ctx.chat.id, target.id);
         await db.insert(botBansTable).values({
@@ -658,11 +684,14 @@ export function setupCommands(bot: Telegraf) {
           username: target.username ?? null, firstName: target.first_name,
           reason: `Auto-ban après ${maxWarnings} avertissements`, bannedByUserId: "bot",
         });
-        await ctx.reply(`🔨 *${target.first_name}* banni automatiquement après ${maxWarnings} avertissements.`, { parse_mode: "Markdown" });
-      } catch (err) { logger.error({ err }, "Auto-ban failed"); }
+        await ctx.reply(`🔨 *${target.first_name}* banni après ${maxWarnings} avertissements.`, { parse_mode: "Markdown" });
+      } catch (err) {
+        logger.error({ err }, "Auto-ban after warn failed");
+        await ctx.reply(`⚠️ Impossible de bannir *${target.first_name}* automatiquement. Vérifiez que le bot a le droit *"Bannir des membres"*.`, { parse_mode: "Markdown" });
+      }
     } else {
       await ctx.reply(
-        `⚠️ *Avertissement* pour ${target.first_name}\n📝 Raison : ${reason}\n🔢 Total : ${totalWarns}/${maxWarnings}`,
+        `⚠️ *Avertissement* pour *${target.first_name}*\n📝 Raison : ${reason}\n🔢 Total : ${totalWarns}/${maxWarnings}`,
         { parse_mode: "Markdown" }
       );
     }
@@ -832,6 +861,151 @@ export function setupCommands(bot: Telegraf) {
     }
     await db.delete(botWarningsTable).where(eq(botWarningsTable.id, lastWarn[0].id));
     await ctx.reply(`✅ Dernier avertissement de *${target.first_name}* retiré.`, { parse_mode: "Markdown" });
+  });
+
+  // ─── /filter ─────────────────────────────────────────────────────────────
+  // Usage: /filter mot [delete|warn|mute|ban]
+  bot.command("filter", async (ctx) => {
+    if (ctx.chat.type === "private") return;
+    if (!(await isAdmin(ctx))) return ctx.reply("❌ Réservé aux administrateurs.");
+
+    const args   = ctx.message.text.trim().split(/\s+/).slice(1);
+    const word   = args[0]?.toLowerCase();
+    const rawAction = args[1]?.toLowerCase();
+    const validActions = ["delete", "warn", "mute", "ban"];
+    const action = validActions.includes(rawAction ?? "") ? rawAction! : "delete";
+
+    if (!word) {
+      return ctx.reply(
+        "📝 *Ajouter un mot interdit*\n\n" +
+        "Usage : `/filter mot [action]`\n\n" +
+        "Actions disponibles :\n" +
+        "• `delete` — Supprimer le message (défaut)\n" +
+        "• `warn` — Avertir l'utilisateur\n" +
+        "• `mute` — Rendre muet\n" +
+        "• `ban` — Bannir\n\n" +
+        "Exemples :\n" +
+        "`/filter arnaque`\n" +
+        "`/filter casino ban`",
+        { parse_mode: "Markdown" }
+      );
+    }
+
+    const groupId = getGroupId(ctx.chat.id);
+    await ensureGroup(ctx.chat.id, ctx.chat.title ?? "Groupe");
+
+    // Vérifier si le mot existe déjà
+    const existing = await db.select().from(botWordFiltersTable)
+      .where(and(eq(botWordFiltersTable.telegramGroupId, groupId), eq(botWordFiltersTable.word, word)));
+    if (existing.length > 0) {
+      // Mettre à jour l'action
+      await db.update(botWordFiltersTable)
+        .set({ action })
+        .where(and(eq(botWordFiltersTable.telegramGroupId, groupId), eq(botWordFiltersTable.word, word)));
+      const actionLabels: Record<string, string> = { delete: "🗑️ Supprimer", warn: "⚠️ Avertir", mute: "🔇 Rendre muet", ban: "🔨 Bannir" };
+      return ctx.reply(`✅ Mot *"${word}"* mis à jour — Action : ${actionLabels[action]}`, { parse_mode: "Markdown" });
+    }
+
+    await db.insert(botWordFiltersTable).values({ telegramGroupId: groupId, word, action });
+    const actionLabels: Record<string, string> = { delete: "🗑️ Supprimer", warn: "⚠️ Avertir", mute: "🔇 Rendre muet", ban: "🔨 Bannir" };
+    await ctx.reply(`✅ Mot *"${word}"* ajouté aux filtres.\nAction : ${actionLabels[action]}`, { parse_mode: "Markdown" });
+  });
+
+  // ─── /filters ────────────────────────────────────────────────────────────
+  bot.command("filters", async (ctx) => {
+    if (ctx.chat.type === "private") return;
+    if (!(await isAdmin(ctx))) return ctx.reply("❌ Réservé aux administrateurs.");
+
+    const groupId = getGroupId(ctx.chat.id);
+    await ensureGroup(ctx.chat.id, ctx.chat.title ?? "Groupe");
+
+    const filters = await db.select().from(botWordFiltersTable)
+      .where(eq(botWordFiltersTable.telegramGroupId, groupId))
+      .orderBy(botWordFiltersTable.createdAt);
+
+    if (filters.length === 0) {
+      return ctx.reply(
+        "📋 *Aucun filtre de mots configuré.*\n\nAjoutez des mots avec `/filter mot [action]`.",
+        { parse_mode: "Markdown" }
+      );
+    }
+
+    const actionLabels: Record<string, string> = { delete: "🗑️", warn: "⚠️", mute: "🔇", ban: "🔨" };
+
+    // Afficher chaque filtre avec boutons d'action et suppression
+    const rows: any[][] = filters.map((f) => [
+      { text: `${actionLabels[f.action] ?? "🗑️"} "${f.word}"`, callback_data: `wfinfo:${f.id}:${groupId}` },
+      { text: "✏️ Action", callback_data: `wfmenu:${f.id}:${groupId}` },
+      { text: "🗑️ Supprimer", callback_data: `wfdel:${f.id}:${groupId}` },
+    ]);
+
+    const header = `📋 *Filtres de mots — ${filters.length} mot(s)*\n\n` +
+      filters.map((f) => `• \`${f.word}\` → ${actionLabels[f.action] ?? "🗑️"} ${f.action}`).join("\n");
+
+    await ctx.reply(header, {
+      parse_mode: "Markdown",
+      reply_markup: { inline_keyboard: rows },
+    });
+  });
+
+  // ─── Callbacks filtres de mots ────────────────────────────────────────────
+  // Ces callbacks sont interceptés AVANT le handler global callback_query dans setupCommands
+  // On les branche directement sur bot.action
+  bot.action(/^wfmenu:(\d+):(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    const filterId = parseInt(ctx.match[1], 10);
+    const groupId  = ctx.match[2];
+    const filter = await db.select().from(botWordFiltersTable).where(eq(botWordFiltersTable.id, filterId)).limit(1).then((r) => r[0]);
+    if (!filter) return;
+    const cur = filter.action;
+    const actionLabels: Record<string, string> = { delete: "🗑️ Supprimer", warn: "⚠️ Avertir", mute: "🔇 Rendre muet", ban: "🔨 Bannir" };
+    await ctx.editMessageText(
+      `✏️ *Action pour le mot "${filter.word}"*\n\nAction actuelle : *${actionLabels[cur] ?? cur}*\n\nChoisissez la nouvelle action :`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: cur === "delete" ? "✅ 🗑️ Supprimer" : "🗑️ Supprimer", callback_data: `wfact:${filterId}:delete:${groupId}` },
+              { text: cur === "warn"   ? "✅ ⚠️ Avertir"   : "⚠️ Avertir",   callback_data: `wfact:${filterId}:warn:${groupId}` },
+            ],
+            [
+              { text: cur === "mute" ? "✅ 🔇 Muet" : "🔇 Muet",  callback_data: `wfact:${filterId}:mute:${groupId}` },
+              { text: cur === "ban"  ? "✅ 🔨 Bannir" : "🔨 Bannir", callback_data: `wfact:${filterId}:ban:${groupId}` },
+            ],
+          ],
+        },
+      }
+    );
+  });
+
+  bot.action(/^wfact:(\d+):(\w+):(.+)$/, async (ctx) => {
+    const filterId  = parseInt(ctx.match[1], 10);
+    const newAction = ctx.match[2];
+    const groupId   = ctx.match[3];
+    const validActions = ["delete", "warn", "mute", "ban"];
+    if (!validActions.includes(newAction)) return ctx.answerCbQuery("❌ Action invalide.");
+    await db.update(botWordFiltersTable).set({ action: newAction }).where(eq(botWordFiltersTable.id, filterId));
+    const filter = await db.select().from(botWordFiltersTable).where(eq(botWordFiltersTable.id, filterId)).limit(1).then((r) => r[0]);
+    const actionLabels: Record<string, string> = { delete: "🗑️ Supprimer", warn: "⚠️ Avertir", mute: "🔇 Rendre muet", ban: "🔨 Bannir" };
+    await ctx.answerCbQuery(`✅ Action mise à jour : ${actionLabels[newAction]}`);
+    try {
+      await ctx.editMessageText(
+        `✅ *Mot "${filter?.word ?? "?"}"* — Action mise à jour : *${actionLabels[newAction]}*\n\nFermez ce menu ou relancez /filters pour voir tous les filtres.`,
+        { parse_mode: "Markdown" }
+      );
+    } catch {}
+  });
+
+  bot.action(/^wfdel:(\d+):(.+)$/, async (ctx) => {
+    const filterId = parseInt(ctx.match[1], 10);
+    const filter = await db.select().from(botWordFiltersTable).where(eq(botWordFiltersTable.id, filterId)).limit(1).then((r) => r[0]);
+    if (!filter) return ctx.answerCbQuery("❌ Filtre introuvable.");
+    await db.delete(botWordFiltersTable).where(eq(botWordFiltersTable.id, filterId));
+    await ctx.answerCbQuery(`🗑️ Mot "${filter.word}" supprimé.`);
+    try {
+      await ctx.editMessageText(`✅ Mot *"${filter.word}"* supprimé des filtres.`, { parse_mode: "Markdown" });
+    } catch {}
   });
 
   // ─── Nouveaux membres ─────────────────────────────────────────────────────
