@@ -3,20 +3,29 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Telegram Moderator Bot API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: bot
+    description: Bot status and global stats
+  - name: groups
+    description: Group management
+  - name: warnings
+    description: Warning management
+  - name: violations
+    description: Violation logs
+  - name: wordfilters
+    description: Word filter management
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +33,307 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /bot/stats:
+    get:
+      operationId: getBotStats
+      tags: [bot]
+      summary: Get overall bot statistics
+      responses:
+        "200":
+          description: Bot stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BotStats"
+
+  /bot/status:
+    get:
+      operationId: getBotStatus
+      tags: [bot]
+      summary: Get bot running status and info
+      responses:
+        "200":
+          description: Bot status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BotStatus"
+
+  /groups:
+    get:
+      operationId: listGroups
+      tags: [groups]
+      summary: List all groups managed by the bot
+      responses:
+        "200":
+          description: List of groups
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Group"
+
+  /groups/{groupId}:
+    get:
+      operationId: getGroup
+      tags: [groups]
+      summary: Get a specific group
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Group details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Group"
+        "404":
+          description: Group not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /groups/{groupId}/settings:
+    put:
+      operationId: updateGroupSettings
+      tags: [groups]
+      summary: Update group moderation settings
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GroupSettingsInput"
+      responses:
+        "200":
+          description: Updated group
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Group"
+        "404":
+          description: Group not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /groups/{groupId}/warnings:
+    get:
+      operationId: listGroupWarnings
+      tags: [warnings]
+      summary: List warnings in a group
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: List of warnings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Warning"
+
+  /groups/{groupId}/warnings/{userId}:
+    delete:
+      operationId: clearUserWarnings
+      tags: [warnings]
+      summary: Clear all warnings for a user in a group
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Warnings cleared
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /groups/{groupId}/violations:
+    get:
+      operationId: listGroupViolations
+      tags: [violations]
+      summary: List moderation violations in a group
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: type
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of violations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Violation"
+
+  /groups/{groupId}/word-filters:
+    get:
+      operationId: listWordFilters
+      tags: [wordfilters]
+      summary: List word filters for a group
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of word filters
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WordFilter"
+    post:
+      operationId: addWordFilter
+      tags: [wordfilters]
+      summary: Add a word filter to a group
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WordFilterInput"
+      responses:
+        "201":
+          description: Word filter created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WordFilter"
+
+  /groups/{groupId}/word-filters/{filterId}:
+    delete:
+      operationId: deleteWordFilter
+      tags: [wordfilters]
+      summary: Delete a word filter
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: filterId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Filter deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /groups/{groupId}/bans:
+    get:
+      operationId: listGroupBans
+      tags: [groups]
+      summary: List banned members in a group
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of bans
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BannedMember"
+
+  /groups/{groupId}/unban/{userId}:
+    post:
+      operationId: unbanUser
+      tags: [groups]
+      summary: Unban a user from a group
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: User unbanned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +344,275 @@ components:
       required:
         - status
 
+    BotStats:
+      type: object
+      properties:
+        totalGroups:
+          type: integer
+        totalWarnings:
+          type: integer
+        totalBans:
+          type: integer
+        totalViolations:
+          type: integer
+        todayViolations:
+          type: integer
+        todayWarnings:
+          type: integer
+        recentActivity:
+          type: array
+          items:
+            $ref: "#/components/schemas/Violation"
+      required:
+        - totalGroups
+        - totalWarnings
+        - totalBans
+        - totalViolations
+        - todayViolations
+        - todayWarnings
+        - recentActivity
+
+    BotStatus:
+      type: object
+      properties:
+        running:
+          type: boolean
+        botName:
+          type: string
+        botUsername:
+          type: string
+        uptime:
+          type: integer
+      required:
+        - running
+        - botName
+        - botUsername
+        - uptime
+
+    Group:
+      type: object
+      properties:
+        id:
+          type: integer
+        telegramId:
+          type: string
+        title:
+          type: string
+        memberCount:
+          type: integer
+        warningCount:
+          type: integer
+        banCount:
+          type: integer
+        antiSpam:
+          type: boolean
+        antiFlood:
+          type: boolean
+        antiLinks:
+          type: boolean
+        antiProfanity:
+          type: boolean
+        welcomeMessage:
+          type: string
+          nullable: true
+        rulesText:
+          type: string
+          nullable: true
+        maxWarnings:
+          type: integer
+        muteDuration:
+          type: integer
+        floodLimit:
+          type: integer
+        floodWindow:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - telegramId
+        - title
+        - memberCount
+        - warningCount
+        - banCount
+        - antiSpam
+        - antiFlood
+        - antiLinks
+        - antiProfanity
+        - maxWarnings
+        - muteDuration
+        - floodLimit
+        - floodWindow
+        - createdAt
+
+    GroupSettingsInput:
+      type: object
+      properties:
+        antiSpam:
+          type: boolean
+        antiFlood:
+          type: boolean
+        antiLinks:
+          type: boolean
+        antiProfanity:
+          type: boolean
+        welcomeMessage:
+          type: string
+          nullable: true
+        rulesText:
+          type: string
+          nullable: true
+        maxWarnings:
+          type: integer
+        muteDuration:
+          type: integer
+        floodLimit:
+          type: integer
+        floodWindow:
+          type: integer
+
+    Warning:
+      type: object
+      properties:
+        id:
+          type: integer
+        telegramGroupId:
+          type: string
+        telegramUserId:
+          type: string
+        username:
+          type: string
+          nullable: true
+        firstName:
+          type: string
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+        warnedByUserId:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - telegramGroupId
+        - telegramUserId
+        - createdAt
+
+    Violation:
+      type: object
+      properties:
+        id:
+          type: integer
+        telegramGroupId:
+          type: string
+        telegramUserId:
+          type: string
+        username:
+          type: string
+          nullable: true
+        firstName:
+          type: string
+          nullable: true
+        violationType:
+          type: string
+        action:
+          type: string
+        details:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - telegramGroupId
+        - telegramUserId
+        - violationType
+        - action
+        - createdAt
+
+    WordFilter:
+      type: object
+      properties:
+        id:
+          type: integer
+        telegramGroupId:
+          type: string
+        word:
+          type: string
+        action:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - telegramGroupId
+        - word
+        - action
+        - createdAt
+
+    WordFilterInput:
+      type: object
+      properties:
+        word:
+          type: string
+        action:
+          type: string
+          enum: [delete, warn, mute, ban]
+      required:
+        - word
+        - action
+
+    BannedMember:
+      type: object
+      properties:
+        id:
+          type: integer
+        telegramGroupId:
+          type: string
+        telegramUserId:
+          type: string
+        username:
+          type: string
+          nullable: true
+        firstName:
+          type: string
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+        bannedByUserId:
+          type: string
+          nullable: true
+        bannedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - telegramGroupId
+        - telegramUserId
+        - bannedAt
+
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+      required:
+        - success
+        - message
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
