@@ -7,11 +7,41 @@ import {
   botWarningsTable,
   botWordFiltersTable,
   botBansTable,
+  botOwnerConfigTable,
 } from "@workspace/db";
 import { eq, and, count } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import { ensureGroup, sendWelcomeMessage } from "./commands";
 import { t } from "./translations";
+
+// ─── Cache config propriétaire ────────────────────────────────────────────
+let ownerConfigCache: { data: any; ts: number } | null = null;
+const OWNER_CFG_TTL = 60_000;
+
+async function getOwnerConfig() {
+  if (ownerConfigCache && Date.now() - ownerConfigCache.ts < OWNER_CFG_TTL) return ownerConfigCache.data;
+  const [cfg] = await db.select().from(botOwnerConfigTable).limit(1);
+  ownerConfigCache = { data: cfg ?? null, ts: Date.now() };
+  return cfg ?? null;
+}
+
+// ─── Cache abonnement canal ───────────────────────────────────────────────
+const channelMemberCache = new Map<string, { ok: boolean; ts: number }>();
+const CHANNEL_TTL = 5 * 60_000;
+
+async function isChannelMember(telegram: any, channelId: string, userId: number): Promise<boolean> {
+  const key = `${channelId}:${userId}`;
+  const cached = channelMemberCache.get(key);
+  if (cached && Date.now() - cached.ts < CHANNEL_TTL) return cached.ok;
+  try {
+    const m = await telegram.getChatMember(channelId, userId);
+    const ok = ["member", "administrator", "creator"].includes(m.status);
+    channelMemberCache.set(key, { ok, ts: Date.now() });
+    return ok;
+  } catch {
+    return true; // fail open si le bot n'est pas dans le canal
+  }
+}
 
 type MsgContext = NarrowedContext<Context, Update.MessageUpdate>;
 
@@ -256,6 +286,30 @@ export function setupMiddleware(bot: Telegraf) {
     } catch {}
 
     const lang = group.language ?? "fr";
+
+    // ── Canal obligatoire (global propriétaire) ──────────────────────────────
+    const ownerCfg = await getOwnerConfig();
+    if (ownerCfg?.requiredChannel) {
+      const isMember = await isChannelMember(ctx.telegram, ownerCfg.requiredChannel, userId);
+      if (!isMember) {
+        try { await ctx.deleteMessage(); } catch {}
+        const channelTitle = ownerCfg.requiredChannelTitle || ownerCfg.requiredChannel;
+        const channelLink = ownerCfg.requiredChannel.startsWith("@")
+          ? `https://t.me/${ownerCfg.requiredChannel.slice(1)}`
+          : `https://t.me/c/${String(ownerCfg.requiredChannel).replace("-100", "")}`;
+        const msgText = ownerCfg.requiredChannelMsg || t(lang, "required_channel_msg");
+        const sent = await ctx.reply(msgText, {
+          parse_mode: "Markdown",
+          reply_markup: {
+            inline_keyboard: [[{ text: `📢 ${channelTitle}`, url: channelLink }]],
+          },
+        });
+        setTimeout(async () => {
+          try { await ctx.telegram.deleteMessage(ctx.chat.id, sent.message_id); } catch {}
+        }, 30_000);
+        return;
+      }
+    }
 
     // ── Anti-flood ──────────────────────────────────────────────────────────
     if (group.antiFlood) {

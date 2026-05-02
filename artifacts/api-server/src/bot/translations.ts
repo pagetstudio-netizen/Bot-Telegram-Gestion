@@ -212,6 +212,21 @@ export const translations: Record<string, Record<string, string>> = {
     pt: "✅ Idioma atualizado: {lang}",
     ar: "✅ تم تحديث اللغة: {lang}",
   },
+  // ── Canal obligatoire ─────────────────────────────────────────────────────
+  required_channel_msg: {
+    fr: "🔒 *Accès restreint*\n\nPour écrire dans ce groupe, vous devez d'abord rejoindre notre canal.",
+    en: "🔒 *Access restricted*\n\nTo write in this group, you must first join our channel.",
+    es: "🔒 *Acceso restringido*\n\nPara escribir en este grupo, primero debes unirte a nuestro canal.",
+    pt: "🔒 *Acesso restrito*\n\nPara escrever neste grupo, você deve primeiro entrar em nosso canal.",
+    ar: "🔒 *الوصول مقيد*\n\nللكتابة في هذه المجموعة، يجب عليك أولاً الانضمام إلى قناتنا.",
+  },
+  required_channel_btn: {
+    fr: "📢 Rejoindre le canal",
+    en: "📢 Join the channel",
+    es: "📢 Unirse al canal",
+    pt: "📢 Entrar no canal",
+    ar: "📢 انضم إلى القناة",
+  },
   // ── /start en privé ───────────────────────────────────────────────────────
   start_private: {
     fr: "🤖 *Bot Modérateur Telegram*\n\nAjoutez-moi à votre groupe, donnez-moi les droits d'administrateur, puis tapez /settings pour configurer et activer la modération.\n\n/settings — ⚙️ Paramètres\n/language — 🌍 Changer de langue\n/help — ❓ Aide complète",

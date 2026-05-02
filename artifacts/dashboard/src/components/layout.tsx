@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { useGetBotStatus } from "@workspace/api-client-react";
-import { LayoutDashboard, Users, ShieldAlert, Activity, Menu } from "lucide-react";
+import { LayoutDashboard, Users, ShieldAlert, Activity, Menu, Settings2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 
@@ -9,9 +9,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { data: botStatus } = useGetBotStatus();
 
   const navigation = [
-    { name: "Dashboard", href: "/", icon: LayoutDashboard },
-    { name: "Groups", href: "/groups", icon: Users },
-    { name: "Violations", href: "/violations", icon: ShieldAlert },
+    { name: "Dashboard",       href: "/",          icon: LayoutDashboard },
+    { name: "Groups",          href: "/groups",     icon: Users },
+    { name: "Violations",      href: "/violations", icon: ShieldAlert },
+    { name: "Owner Settings",  href: "/owner",      icon: Settings2 },
   ];
 
   const formatUptime = (seconds?: number) => {

@@ -8,6 +8,7 @@ import Dashboard from "@/pages/dashboard";
 import GroupsList from "@/pages/groups-list";
 import GroupDetail from "@/pages/group-detail";
 import Violations from "@/pages/violations";
+import OwnerSettings from "@/pages/owner-settings";
 
 const queryClient = new QueryClient();
 
@@ -19,6 +20,7 @@ function Router() {
         <Route path="/groups" component={GroupsList} />
         <Route path="/groups/:groupId" component={GroupDetail} />
         <Route path="/violations" component={Violations} />
+        <Route path="/owner" component={OwnerSettings} />
         <Route component={NotFound} />
       </Switch>
     </Layout>
