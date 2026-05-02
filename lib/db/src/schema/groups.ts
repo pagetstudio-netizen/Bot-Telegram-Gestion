@@ -1,4 +1,4 @@
-import { pgTable, text, serial, boolean, integer, timestamp, bigint } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, boolean, integer, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -6,6 +6,7 @@ export const botGroupsTable = pgTable("bot_groups", {
   id: serial("id").primaryKey(),
   telegramId: text("telegram_id").notNull().unique(),
   title: text("title").notNull(),
+  isActive: boolean("is_active").notNull().default(false),
   antiSpam: boolean("anti_spam").notNull().default(true),
   antiFlood: boolean("anti_flood").notNull().default(true),
   antiLinks: boolean("anti_links").notNull().default(false),

@@ -53,12 +53,10 @@ async function muteUser(ctx: MsgContext, userId: number, seconds: number, groupI
       until_date: until,
     });
     await logViolation(
-      groupId,
-      userId.toString(),
+      groupId, userId.toString(),
       (ctx as any).from?.username ?? null,
       (ctx as any).from?.first_name ?? "Inconnu",
-      reason,
-      "mute",
+      reason, "mute",
       `Muet auto ${Math.round(seconds / 60)} min`
     );
   } catch (err) {
@@ -74,12 +72,8 @@ async function deleteAndWarn(ctx: MsgContext, reason: string, groupId: string, g
   const firstName = ctx.from?.first_name ?? "Inconnu";
 
   await db.insert(botWarningsTable).values({
-    telegramGroupId: groupId,
-    telegramUserId: userId,
-    username,
-    firstName,
-    reason,
-    warnedByUserId: "bot",
+    telegramGroupId: groupId, telegramUserId: userId,
+    username, firstName, reason, warnedByUserId: "bot",
   });
 
   await logViolation(groupId, userId, username, firstName, "auto_warning", "warn", reason);
@@ -103,17 +97,14 @@ async function deleteAndWarn(ctx: MsgContext, reason: string, groupId: string, g
     try {
       await ctx.telegram.banChatMember(ctx.chat.id, ctx.from!.id);
       await db.insert(botBansTable).values({
-        telegramGroupId: groupId,
-        telegramUserId: userId,
-        username,
-        firstName,
+        telegramGroupId: groupId, telegramUserId: userId,
+        username, firstName,
         reason: `Auto-ban après ${maxWarnings} avertissements`,
         bannedByUserId: "bot",
       });
-      await logViolation(groupId, userId, username, firstName, "auto_ban", "ban", `Auto-ban après ${maxWarnings} avertissements`);
-      await ctx.reply(`🔨 *${firstName}* a été banni après ${maxWarnings} avertissements.`, {
-        parse_mode: "Markdown",
-      });
+      await logViolation(groupId, userId, username, firstName, "auto_ban", "ban",
+        `Auto-ban après ${maxWarnings} avertissements`);
+      await ctx.reply(`🔨 *${firstName}* a été banni après ${maxWarnings} avertissements.`, { parse_mode: "Markdown" });
     } catch (err) {
       logger.error({ err }, "Auto-ban failed");
     }
@@ -142,7 +133,10 @@ export function setupMiddleware(bot: Telegraf) {
     const group = await getGroup(ctx.chat.id);
     if (!group) return next();
 
-    // Skip moderation for admins
+    // ── Si le bot est inactif, aucune modération automatique ────────────────
+    if (!group.isActive) return next();
+
+    // ── Les admins sont exemptés de toute modération ────────────────────────
     try {
       const member = await ctx.telegram.getChatMember(ctx.chat.id, userId);
       if (["administrator", "creator"].includes(member.status)) return next();
@@ -233,14 +227,12 @@ export function setupMiddleware(bot: Telegraf) {
               await ctx.deleteMessage();
               await ctx.telegram.banChatMember(ctx.chat.id, userId);
               await db.insert(botBansTable).values({
-                telegramGroupId: groupId,
-                telegramUserId: userId.toString(),
-                username,
-                firstName,
-                reason: `Mot interdit: ${filter.word}`,
-                bannedByUserId: "bot",
+                telegramGroupId: groupId, telegramUserId: userId.toString(),
+                username, firstName,
+                reason: `Mot interdit: ${filter.word}`, bannedByUserId: "bot",
               });
-              await logViolation(groupId, userId.toString(), username, firstName, "word_filter_ban", "ban", `Banni pour mot interdit: ${filter.word}`);
+              await logViolation(groupId, userId.toString(), username, firstName, "word_filter_ban", "ban",
+                `Banni pour mot interdit: ${filter.word}`);
             } catch {}
           }
           return;
@@ -251,9 +243,10 @@ export function setupMiddleware(bot: Telegraf) {
     return next();
   });
 
-  // ── Bot ajouté au groupe : message de configuration ─────────────────────
+  // ── Bot ajouté au groupe — message de configuration (sans modération) ────
   bot.on("my_chat_member", async (ctx) => {
     const newStatus = ctx.myChatMember?.new_chat_member?.status;
+    const oldStatus = ctx.myChatMember?.old_chat_member?.status;
 
     if ((newStatus === "member" || newStatus === "administrator") && ctx.chat.type !== "private") {
       const chatId = ctx.chat.id;
@@ -261,29 +254,23 @@ export function setupMiddleware(bot: Telegraf) {
 
       await ensureGroup(chatId, title);
 
-      // Message de bienvenue + instructions
-      const isAdmin = newStatus === "administrator";
+      const hasAdminRights = newStatus === "administrator";
 
       await ctx.telegram.sendMessage(
         chatId,
-        `🤖 *Bot Modérateur activé dans "${title}" !*\n\n` +
-          (isAdmin
-            ? `✅ J'ai les droits d'administrateur — la modération est active.\n\n`
-            : `⚠️ *Je n'ai pas encore les droits d'administrateur.*\nDonnez-moi les droits d'admin pour activer la modération.\n\n`) +
-          `⚙️ *Pour configurer ce groupe :*\n` +
-          `• Tapez /settings pour les paramètres de modération\n` +
-          `• Tapez /setwelcome [texte] pour le message de bienvenue\n` +
-          `• Tapez /setrules [texte] pour définir les règles\n\n` +
-          `🛡️ *Protection disponible :*\n` +
-          `• Anti-spam & anti-flood\n` +
-          `• Anti-liens & anti-grossièretés\n` +
-          `• Filtres de mots personnalisés\n` +
-          `• Avertissements automatiques avec /warn\n\n` +
-          `Tapez /help pour la liste complète des commandes.`,
+        `👋 *Bonjour ! Je suis votre bot modérateur.*\n\n` +
+          (hasAdminRights
+            ? `✅ J'ai les droits d'administrateur.\n\n`
+            : `⚠️ *Je n'ai pas encore les droits d'administrateur.*\nMerci de m'accorder les droits pour que je puisse modérer.\n\n`) +
+          `🔴 *Je suis actuellement inactif.* La modération ne commencera pas tant qu'un administrateur ne m'aura pas configuré et activé.\n\n` +
+          `Pour commencer, tapez /settings pour :\n` +
+          `• Choisir les règles de modération\n` +
+          `• Définir le message de bienvenue\n` +
+          `• M'activer quand tout est prêt`,
         { parse_mode: "Markdown" }
       );
 
-      logger.info({ chatId, title, isAdmin }, "Bot added to group — welcome message sent");
+      logger.info({ chatId, title, hasAdminRights }, "Bot added to group — setup message sent (inactive)");
     }
   });
 
