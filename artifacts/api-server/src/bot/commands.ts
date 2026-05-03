@@ -348,6 +348,47 @@ function buildOwnerLinksText(links: OwnerLink[]): string {
   return `🔗 *Liens obligatoires* (${links.length})\n\nLes membres doivent rejoindre tous les canaux 📢 pour pouvoir écrire :\n\n${list}`;
 }
 
+// ─── Vérification canaux (privé) ──────────────────────────────────────────
+
+async function checkRequiredChannels(telegram: any, userId: number): Promise<{ ok: boolean; failed: OwnerLink[] }> {
+  const links = await getOwnerLinks();
+  const channelLinks = links.filter((l) => l.type === "channel");
+  if (channelLinks.length === 0) return { ok: true, failed: [] };
+  const failed: OwnerLink[] = [];
+  for (const link of channelLinks) {
+    try {
+      const m = await telegram.getChatMember(link.value, userId);
+      if (!["member", "administrator", "creator"].includes(m.status)) failed.push(link);
+    } catch {
+      failed.push(link);
+    }
+  }
+  return { ok: failed.length === 0, failed };
+}
+
+function buildChannelGateMsg(failedChannels: OwnerLink[], allLinks: OwnerLink[], isRetry = false): { text: string; keyboard: any } {
+  const names = failedChannels.map((l) => `*${l.title || l.value}*`).join(", ");
+  const intro = isRetry
+    ? `❌ *Abonnement incomplet.*\n\nVous n'êtes pas encore abonné à : ${names}\n\nRejoignez-les puis cliquez à nouveau sur ✅ Vérifier.`
+    : `👋 *Bienvenue !*\n\nPour utiliser ce service et ajouter le bot dans votre groupe, vous devez d'abord vous abonner à nos canaux.\n\n📋 *Requis :* ${names}\n\nCliquez ci-dessous pour rejoindre, puis appuyez sur *✅ Vérifier mon abonnement*.`;
+
+  const buttons: any[][] = [
+    ...failedChannels.map((l) => [{
+      text: `📢 ${l.title || l.value}`,
+      url: l.value.startsWith("@")
+        ? `https://t.me/${l.value.slice(1)}`
+        : `https://t.me/c/${String(l.value).replace("-100", "")}`,
+    }]),
+    ...allLinks.filter((l) => l.type === "website").map((l) => [{
+      text: `🌐 ${l.title || l.value}`,
+      url: l.value,
+    }]),
+    [{ text: "✅ Vérifier mon abonnement", callback_data: "verifychannels" }],
+  ];
+
+  return { text: intro, keyboard: { inline_keyboard: buttons } };
+}
+
 function buildOwnerLinksKeyboard(links: OwnerLink[]): any {
   const rows: any[][] = [];
   links.forEach((l, i) => {
@@ -372,6 +413,16 @@ export function setupCommands(bot: Telegraf) {
   bot.command("start", async (ctx) => {
     if (ctx.chat.type === "private") {
       const lang = await getUserLang(ctx.from!.id);
+
+      // Vérifier les canaux obligatoires
+      const { ok, failed } = await checkRequiredChannels(ctx.telegram, ctx.from!.id);
+      if (!ok) {
+        const allLinks = await getOwnerLinks();
+        const { text, keyboard } = buildChannelGateMsg(failed, allLinks, false);
+        await ctx.reply(text, { parse_mode: "Markdown", reply_markup: keyboard });
+        return;
+      }
+
       await ctx.reply(t(lang, "start_private"), { parse_mode: "Markdown" });
     }
   });
@@ -550,6 +601,29 @@ export function setupCommands(bot: Telegraf) {
     const parts = data.split(":");
     const action = parts[0];
     const field  = parts[1];
+
+    // ── Vérification abonnement canaux (privé) ────────────────────────────
+    if (data === "verifychannels") {
+      const allLinks = await getOwnerLinks();
+      const { ok, failed } = await checkRequiredChannels(ctx.telegram, ctx.from!.id);
+      if (ok) {
+        await ctx.answerCbQuery("✅ Abonnement vérifié !", { show_alert: false });
+        const lang = await getUserLang(ctx.from!.id);
+        const successText =
+          `✅ *Parfait !* Votre abonnement a été vérifié avec succès.\n\n` +
+          t(lang, "start_private");
+        try { await ctx.editMessageText(successText, { parse_mode: "Markdown" }); } catch {
+          await ctx.reply(successText, { parse_mode: "Markdown" });
+        }
+      } else {
+        await ctx.answerCbQuery("❌ Abonnement incomplet.", { show_alert: true });
+        const { text, keyboard } = buildChannelGateMsg(failed, allLinks, true);
+        try { await ctx.editMessageText(text, { parse_mode: "Markdown", reply_markup: keyboard }); } catch {
+          await ctx.reply(text, { parse_mode: "Markdown", reply_markup: keyboard });
+        }
+      }
+      return;
+    }
 
     // ── Vérification nouveau membre (accepter les règles) ─────────────────
     // Ce callback est public : n'importe quel membre peut cliquer sur "J'accepte"
