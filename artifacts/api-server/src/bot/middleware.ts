@@ -513,13 +513,16 @@ export function setupMiddleware(bot: Telegraf) {
             text: `🌐 ${l.title || l.value}`,
             url: l.value,
           }]),
+          [{ text: "✅ Vérifier mon abonnement", callback_data: `verifychannels:addbot:${chatId}` }],
         ];
 
         const channelNames = failedChannels.map((l) => `*${l.title || l.value}*`).join(", ");
         const refuseMsg =
           `❌ *Impossible d'ajouter le bot dans "${title}".*\n\n` +
           `Pour utiliser ce bot, vous devez d'abord rejoindre ${channelNames}.\n\n` +
-          `Rejoignez le${failedChannels.length > 1 ? "s canaux" : " canal"} ci-dessous, puis réessayez d'ajouter le bot.`;
+          `1️⃣ Rejoignez le${failedChannels.length > 1 ? "s canaux" : " canal"} ci-dessous.\n` +
+          `2️⃣ Cliquez sur *✅ Vérifier mon abonnement*.\n` +
+          `3️⃣ Réessayez d'ajouter le bot.`;
 
         // Envoyer un message privé à la personne qui a essayé d'ajouter le bot
         try {

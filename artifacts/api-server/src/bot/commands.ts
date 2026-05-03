@@ -601,15 +601,19 @@ export function setupCommands(bot: Telegraf) {
     const field  = parts[1];
 
     // ── Vérification abonnement canaux (privé) ────────────────────────────
-    if (data === "verifychannels") {
+    if (data === "verifychannels" || data.startsWith("verifychannels:")) {
+      const isAddBot = data.startsWith("verifychannels:addbot:");
       const allLinks = await getOwnerLinks();
       const { ok, failed } = await checkRequiredChannels(ctx.telegram, ctx.from!.id);
       if (ok) {
         await ctx.answerCbQuery("✅ Abonnement vérifié !", { show_alert: false });
         const lang = await getUserLang(ctx.from!.id);
-        const successText =
-          `✅ *Parfait !* Votre abonnement a été vérifié avec succès.\n\n` +
-          t(lang, "start_private");
+        const successText = isAddBot
+          ? `✅ *Parfait !* Votre abonnement a été vérifié avec succès.\n\n` +
+            `➕ Vous pouvez maintenant *ajouter le bot dans votre groupe*.\n\n` +
+            `Retournez dans votre groupe et ajoutez @${ctx.botInfo?.username} en tant qu'administrateur.`
+          : `✅ *Parfait !* Votre abonnement a été vérifié avec succès.\n\n` +
+            t(lang, "start_private");
         try { await ctx.editMessageText(successText, { parse_mode: "Markdown" }); } catch {
           await ctx.reply(successText, { parse_mode: "Markdown" });
         }
