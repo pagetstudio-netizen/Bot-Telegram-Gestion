@@ -591,7 +591,7 @@ export function setupCommands(bot: Telegraf) {
   });
 
   // ─── Callback query ────────────────────────────────────────────────────────
-  bot.on("callback_query", async (ctx) => {
+  bot.on("callback_query", async (ctx, next) => {
     const data = (ctx.callbackQuery as any).data as string;
     if (!data) return ctx.answerCbQuery();
 
@@ -994,7 +994,7 @@ export function setupCommands(bot: Telegraf) {
       return;
     }
 
-    await ctx.answerCbQuery();
+    return next();
   });
 
   // ─── Réponses texte aux saisies en attente ────────────────────────────────
