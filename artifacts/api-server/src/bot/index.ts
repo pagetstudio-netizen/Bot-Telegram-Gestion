@@ -6,13 +6,35 @@ import { setupMiddleware } from "./middleware";
 let bot: Telegraf | null = null;
 let botStartTime = Date.now();
 let botInfo: { first_name: string; username: string } | null = null;
+let botRestartCount = 0;
 
 export function getBot(): Telegraf | null {
   return bot;
 }
 
 export function getBotInfo() {
-  return { botInfo, uptime: Math.floor((Date.now() - botStartTime) / 1000), running: bot !== null };
+  return {
+    botInfo,
+    uptime: Math.floor((Date.now() - botStartTime) / 1000),
+    running: bot !== null,
+    restartCount: botRestartCount,
+  };
+}
+
+export async function restartBot(): Promise<{ success: boolean; message: string }> {
+  try {
+    if (bot) {
+      bot.stop("RESTART");
+      bot = null;
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+    await startBot();
+    botRestartCount++;
+    return { success: true, message: "Bot redémarré avec succès." };
+  } catch (err) {
+    logger.error({ err }, "Bot restart failed");
+    return { success: false, message: "Erreur lors du redémarrage." };
+  }
 }
 
 export async function startBot() {
