@@ -1,0 +1,13 @@
+uploads = []
+
+[[generated]]
+id = "RZS9TUwd1phSxFWYW3O2e"
+uri = "file://attached_assets/group_protector_logo.png"
+type = "image"
+title = "group protector shield logo"
+
+[[outputs]]
+id = "KURlcXPkYuMJkH4vA7jBv"
+uri = "file://attached_assets/group_protector_logo.png"
+type = "image"
+title = "Group Protector — Logo"
