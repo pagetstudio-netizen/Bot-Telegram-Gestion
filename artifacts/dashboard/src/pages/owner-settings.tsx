@@ -139,8 +139,10 @@ export default function OwnerSettings() {
             Liens obligatoires
           </CardTitle>
           <CardDescription>
-            Les membres de tous les groupes devront rejoindre ces canaux avant de pouvoir écrire.
-            Vous pouvez ajouter plusieurs canaux Telegram <strong>et</strong> des sites web.
+            Quand quelqu'un essaie d'ajouter votre bot dans un groupe, le bot vérifie que cette personne
+            est abonnée à tous vos canaux. Si ce n'est pas le cas, le bot quitte le groupe et envoie
+            un message privé à la personne avec les liens à rejoindre. Vous pouvez configurer plusieurs
+            canaux Telegram <strong>et</strong> des liens vers votre site web.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">

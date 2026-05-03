@@ -287,47 +287,6 @@ export function setupMiddleware(bot: Telegraf) {
 
     const lang = group.language ?? "fr";
 
-    // ── Liens obligatoires (global propriétaire) ─────────────────────────────
-    const ownerCfg = await getOwnerConfig();
-    type OLink = { type: "channel" | "website"; value: string; title: string };
-    const allLinks: OLink[] = ownerCfg?.requiredLinks
-      ? (() => { try { return JSON.parse(ownerCfg.requiredLinks); } catch { return []; } })()
-      : [];
-
-    if (allLinks.length > 0) {
-      const failedChannels: OLink[] = [];
-      for (const link of allLinks) {
-        if (link.type === "channel") {
-          const ok = await isChannelMember(ctx.telegram, link.value, userId);
-          if (!ok) failedChannels.push(link);
-        }
-      }
-      if (failedChannels.length > 0) {
-        try { await ctx.deleteMessage(); } catch {}
-        const buttons = [
-          ...failedChannels.map((l) => [{
-            text: `📢 ${l.title || l.value}`,
-            url: l.value.startsWith("@")
-              ? `https://t.me/${l.value.slice(1)}`
-              : `https://t.me/c/${String(l.value).replace("-100", "")}`,
-          }]),
-          ...allLinks.filter((l) => l.type === "website").map((l) => [{
-            text: `🌐 ${l.title || l.value}`,
-            url: l.value,
-          }]),
-        ];
-        const msgText = ownerCfg?.requiredChannelMsg || t(lang, "required_channel_msg");
-        const sent = await ctx.reply(msgText, {
-          parse_mode: "Markdown",
-          reply_markup: { inline_keyboard: buttons },
-        });
-        setTimeout(async () => {
-          try { await ctx.telegram.deleteMessage(ctx.chat.id, sent.message_id); } catch {}
-        }, 30_000);
-        return;
-      }
-    }
-
     // ── Anti-flood ──────────────────────────────────────────────────────────
     if (group.antiFlood) {
       const floodKey = `${groupId}:${userId}:flood`;
@@ -511,31 +470,93 @@ export function setupMiddleware(bot: Telegraf) {
   // ── Bot ajouté au groupe ─────────────────────────────────────────────────
   bot.on("my_chat_member", async (ctx) => {
     const newStatus = ctx.myChatMember?.new_chat_member?.status;
-    if ((newStatus === "member" || newStatus === "administrator") && ctx.chat.type !== "private") {
-      const chatId = ctx.chat.id;
-      const title  = (ctx.chat as any).title ?? "Groupe";
-      const group  = await ensureGroup(chatId, title);
-      const hasAdminRights = newStatus === "administrator";
-      const groupId = chatId.toString();
-      const lang = group?.language ?? "fr";
+    const oldStatus = ctx.myChatMember?.old_chat_member?.status;
+    const isBeingAdded = (newStatus === "member" || newStatus === "administrator")
+      && ["left", "kicked"].includes(oldStatus ?? "");
 
-      const msgKey = hasAdminRights ? "bot_added_admin" : "bot_added_no_admin";
+    if (!isBeingAdded || ctx.chat.type === "private") return;
 
-      await ctx.telegram.sendMessage(
-        chatId,
-        t(lang, msgKey),
-        {
-          parse_mode: "Markdown",
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: t(lang, "btn_set_rules"),      callback_data: `set:rules:${groupId}` }],
-              [{ text: t(lang, "btn_open_settings"),  callback_data: `open:settings:${groupId}` }],
-            ],
-          },
+    const chatId  = ctx.chat.id;
+    const addedBy = ctx.myChatMember.from;        // personne qui a ajouté le bot
+    const title   = (ctx.chat as any).title ?? "Groupe";
+    const groupId = chatId.toString();
+
+    // ── Vérification des canaux obligatoires ─────────────────────────────
+    const ownerCfg = await getOwnerConfig();
+    type OLink = { type: "channel" | "website"; value: string; title: string };
+    const allLinks: OLink[] = ownerCfg?.requiredLinks
+      ? (() => { try { return JSON.parse(ownerCfg.requiredLinks); } catch { return []; } })()
+      : [];
+
+    const channelLinks = allLinks.filter((l) => l.type === "channel");
+
+    if (channelLinks.length > 0) {
+      const failedChannels: OLink[] = [];
+      for (const link of channelLinks) {
+        const ok = await isChannelMember(ctx.telegram, link.value, addedBy.id);
+        if (!ok) failedChannels.push(link);
+      }
+
+      if (failedChannels.length > 0) {
+        // Quitter le groupe immédiatement
+        try { await ctx.telegram.leaveChat(chatId); } catch {}
+
+        // Construire les boutons vers les canaux non rejoints + sites web
+        const buttons = [
+          ...failedChannels.map((l) => [{
+            text: `📢 ${l.title || l.value}`,
+            url: l.value.startsWith("@")
+              ? `https://t.me/${l.value.slice(1)}`
+              : `https://t.me/c/${String(l.value).replace("-100", "")}`,
+          }]),
+          ...allLinks.filter((l) => l.type === "website").map((l) => [{
+            text: `🌐 ${l.title || l.value}`,
+            url: l.value,
+          }]),
+        ];
+
+        const channelNames = failedChannels.map((l) => `*${l.title || l.value}*`).join(", ");
+        const refuseMsg =
+          `❌ *Impossible d'ajouter le bot dans "${title}".*\n\n` +
+          `Pour utiliser ce bot, vous devez d'abord rejoindre ${channelNames}.\n\n` +
+          `Rejoignez le${failedChannels.length > 1 ? "s canaux" : " canal"} ci-dessous, puis réessayez d'ajouter le bot.`;
+
+        // Envoyer un message privé à la personne qui a essayé d'ajouter le bot
+        try {
+          await ctx.telegram.sendMessage(addedBy.id, refuseMsg, {
+            parse_mode: "Markdown",
+            reply_markup: { inline_keyboard: buttons },
+          });
+        } catch {
+          // Si le bot ne peut pas envoyer en privé (jamais discuté), on ne peut rien faire
+          logger.warn({ userId: addedBy.id }, "Cannot send private refusal message");
         }
-      );
-      logger.info({ chatId, title, hasAdminRights }, "Bot added to group");
+
+        logger.info({ chatId, title, addedBy: addedBy.id }, "Bot left group: required channels not joined");
+        return;
+      }
     }
+
+    // ── Tout est OK : enregistrer le groupe et envoyer le message d'accueil ──
+    const group = await ensureGroup(chatId, title);
+    const hasAdminRights = newStatus === "administrator";
+    const lang = group?.language ?? "fr";
+    const msgKey = hasAdminRights ? "bot_added_admin" : "bot_added_no_admin";
+
+    await ctx.telegram.sendMessage(
+      chatId,
+      t(lang, msgKey),
+      {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: t(lang, "btn_set_rules"),     callback_data: `set:rules:${groupId}` }],
+            [{ text: t(lang, "btn_open_settings"), callback_data: `open:settings:${groupId}` }],
+          ],
+        },
+      }
+    );
+    logger.info({ chatId, title, hasAdminRights }, "Bot added to group");
   });
 
   logger.info("Bot middleware registered");
