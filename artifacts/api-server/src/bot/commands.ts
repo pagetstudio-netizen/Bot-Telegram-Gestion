@@ -19,6 +19,15 @@ async function setUserLang(userId: number, lang: string) {
     .onConflictDoUpdate({ target: botUserSettingsTable.telegramUserId, set: { language: lang, updatedAt: new Date() } });
 }
 
+async function ctxLang(ctx: any): Promise<string> {
+  if (ctx.chat?.type === "private") return getUserLang(ctx.from!.id);
+  const row = await db.select({ language: botGroupsTable.language })
+    .from(botGroupsTable)
+    .where(eq(botGroupsTable.telegramId, ctx.chat!.id.toString()))
+    .limit(1).then((r) => r[0]);
+  return row?.language ?? "fr";
+}
+
 async function isAdmin(ctx: any): Promise<boolean> {
   if (!ctx.chat || ctx.chat.type === "private") return false;
   if (!ctx.from) return false;
@@ -436,8 +445,8 @@ export function setupCommands(bot: Telegraf) {
     const isGroupAdmin = ctx.chat.type !== "private" && await isAdmin(ctx);
 
     if (ctx.chat.type !== "private" && !isGroupAdmin) {
-      // Utilisateur normal en groupe : ouvrir en DM
-      return ctx.reply("🌍 Utilisez `/language` en message privé avec le bot pour changer votre langue.", { parse_mode: "Markdown" });
+      const glang2 = await ctxLang(ctx);
+      return ctx.reply(t(glang2, "language_in_private"), { parse_mode: "Markdown" });
     }
 
     if (ctx.chat.type === "private") {
@@ -485,41 +494,21 @@ export function setupCommands(bot: Telegraf) {
 
   // /help
   bot.command("help", async (ctx) => {
-    await ctx.reply(
-      "🛡️ *Commandes du bot modérateur*\n\n" +
-        "⚙️ *Configuration (admins) :*\n" +
-        "/settings — Paramètres & activer/désactiver le bot\n" +
-        "/setwelcome [texte] — Message de bienvenue\n" +
-        "/setrules [texte] — Règles du groupe\n\n" +
-        "👮 *Modération (admins) :*\n" +
-        "/warn (répondre) [raison] — Avertissement\n" +
-        "/unwarn (répondre) — Retirer dernier avertissement\n" +
-        "/ban (répondre) [raison] — Bannir\n" +
-        "/unban (répondre) — Débannir\n" +
-        "/kick (répondre) — Expulser\n" +
-        "/mute (répondre) [minutes] — Rendre muet\n" +
-        "/unmute (répondre) — Lever le silence\n\n" +
-        "🔤 *Filtres de mots (admins) :*\n" +
-        "/filter mot [action] — Ajouter un mot interdit (actions : delete, warn, mute, ban)\n" +
-        "/filters — Voir et gérer tous les filtres\n\n" +
-        "📊 *Informations :*\n" +
-        "/warnings (répondre) — Voir les avertissements\n" +
-        "/rules — Afficher les règles\n" +
-        "/stats — Statistiques du groupe",
-      { parse_mode: "Markdown" }
-    );
+    const lang = await ctxLang(ctx);
+    await ctx.reply(t(lang, "help_text"), { parse_mode: "Markdown" });
   });
 
   // /settings
   bot.command("settings", async (ctx) => {
+    const lang = await ctxLang(ctx);
     if (ctx.chat.type === "private") {
-      return ctx.reply("ℹ️ Utilisez /settings directement dans votre groupe.");
+      return ctx.reply(t(lang, "settings_in_group"), { parse_mode: "Markdown" });
     }
     if (!(await isAdmin(ctx))) {
-      return ctx.reply("❌ Seuls les administrateurs peuvent accéder aux paramètres.");
+      return ctx.reply(t(lang, "admin_only"));
     }
     const group = await ensureGroup(ctx.chat.id, ctx.chat.title ?? "Groupe");
-    if (!group) return ctx.reply("❌ Erreur lors du chargement des paramètres.");
+    if (!group) return ctx.reply(t(lang, "settings_load_error"));
     await ctx.reply(buildSettingsText(group), {
       parse_mode: "Markdown",
       reply_markup: buildSettingsKeyboard(group),
@@ -529,37 +518,32 @@ export function setupCommands(bot: Telegraf) {
   // /setwelcome
   bot.command("setwelcome", async (ctx) => {
     if (ctx.chat.type === "private") return;
-    if (!(await isAdmin(ctx))) return ctx.reply("❌ Réservé aux administrateurs.");
+    const lang = await ctxLang(ctx);
+    if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
     const text = ctx.message.text.split(" ").slice(1).join(" ").trim();
     if (!text) {
-      return ctx.reply(
-        "📝 *Utilisation :* `/setwelcome Bienvenue {name} dans {group} !`\n\nVariables : `{name}` = prénom, `{group}` = nom du groupe",
-        { parse_mode: "Markdown" }
-      );
+      return ctx.reply(t(lang, "setwelcome_usage"), { parse_mode: "Markdown" });
     }
     await ensureGroup(ctx.chat.id, ctx.chat.title ?? "Groupe");
     await db.update(botGroupsTable)
       .set({ welcomeMessage: text, updatedAt: new Date() })
       .where(eq(botGroupsTable.telegramId, getGroupId(ctx.chat.id)));
-    await ctx.reply(
-      `✅ *Message de bienvenue mis à jour !*\n\n_Aperçu :_\n${text.replace("{name}", "Nouveau Membre").replace("{group}", ctx.chat.title ?? "ce groupe")}`,
-      { parse_mode: "Markdown" }
-    );
+    const preview = text.replace("{name}", "Nouveau Membre").replace("{group}", ctx.chat.title ?? "ce groupe");
+    await ctx.reply(t(lang, "setwelcome_updated", { preview }), { parse_mode: "Markdown" });
   });
 
   // /setrules
   bot.command("setrules", async (ctx) => {
     if (ctx.chat.type === "private") return;
-    if (!(await isAdmin(ctx))) return ctx.reply("❌ Réservé aux administrateurs.");
+    const lang = await ctxLang(ctx);
+    if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
     const text = ctx.message.text.split(" ").slice(1).join(" ").trim();
-    if (!text) {
-      return ctx.reply("📝 *Utilisation :* `/setrules 1. Soyez respectueux\\n2. Pas de spam...`", { parse_mode: "Markdown" });
-    }
+    if (!text) return ctx.reply(t(lang, "setrules_usage"), { parse_mode: "Markdown" });
     await ensureGroup(ctx.chat.id, ctx.chat.title ?? "Groupe");
     await db.update(botGroupsTable)
       .set({ rulesText: text, updatedAt: new Date() })
       .where(eq(botGroupsTable.telegramId, getGroupId(ctx.chat.id)));
-    await ctx.reply("✅ *Règles mises à jour !* Tapez /rules pour les afficher.", { parse_mode: "Markdown" });
+    await ctx.reply(t(lang, "setrules_updated"), { parse_mode: "Markdown" });
   });
 
   // /rules
@@ -578,16 +562,19 @@ export function setupCommands(bot: Telegraf) {
   // /stats
   bot.command("stats", async (ctx) => {
     if (ctx.chat.type === "private") return;
-    if (!(await isAdmin(ctx))) return ctx.reply("❌ Réservé aux administrateurs.");
+    const lang = await ctxLang(ctx);
+    if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
     const groupId = getGroupId(ctx.chat.id);
     const [warnCount] = await db.select({ count: count() }).from(botWarningsTable).where(eq(botWarningsTable.telegramGroupId, groupId));
     const [banCount]  = await db.select({ count: count() }).from(botBansTable).where(and(eq(botBansTable.telegramGroupId, groupId), eq(botBansTable.unbannedAt, null as any)));
     const [violCount] = await db.select({ count: count() }).from(botViolationsTable).where(eq(botViolationsTable.telegramGroupId, groupId));
     await ctx.reply(
-      `📊 *Statistiques — ${ctx.chat.title}*\n\n` +
-        `⚠️ Avertissements : ${warnCount?.count ?? 0}\n` +
-        `🔨 Bans actifs : ${banCount?.count ?? 0}\n` +
-        `🚨 Violations totales : ${violCount?.count ?? 0}`,
+      t(lang, "stats_text", {
+        group: ctx.chat.title ?? "",
+        warns: warnCount?.count ?? 0,
+        bans: banCount?.count ?? 0,
+        violations: violCount?.count ?? 0,
+      }),
       { parse_mode: "Markdown" }
     );
   });
@@ -1234,10 +1221,11 @@ export function setupCommands(bot: Telegraf) {
   // ─── /warn ────────────────────────────────────────────────────────────────
   bot.command("warn", async (ctx) => {
     if (ctx.chat.type === "private") return;
-    if (!(await isAdmin(ctx))) return ctx.reply("❌ Réservé aux administrateurs.");
+    const lang = await ctxLang(ctx);
+    if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
     const target = ctx.message.reply_to_message?.from;
-    if (!target) return ctx.reply("↩️ Répondez au message d'un utilisateur pour l'avertir.");
-    if (target.is_bot) return ctx.reply("❌ Impossible d'avertir un bot.");
+    if (!target) return ctx.reply(t(lang, "no_reply"));
+    if (target.is_bot) return ctx.reply(t(lang, "cannot_target_bot"));
 
     const reason  = ctx.message.text.split(" ").slice(1).join(" ") || "Comportement inapproprié";
     const groupId = getGroupId(ctx.chat.id);
@@ -1247,12 +1235,10 @@ export function setupCommands(bot: Telegraf) {
     const group = await db.select().from(botGroupsTable).where(eq(botGroupsTable.telegramId, groupId)).limit(1);
     const maxWarnings = group[0]?.maxWarnings ?? 3;
 
-    // Compter AVANT d'insérer
     const [{ count: existingWarns }] = await db.select({ count: count() }).from(botWarningsTable)
       .where(and(eq(botWarningsTable.telegramGroupId, groupId), eq(botWarningsTable.telegramUserId, userId)));
     const existing = Number(existingWarns);
 
-    // Déjà au max → ban direct sans ajouter un nouvel avertissement
     if (existing >= maxWarnings) {
       try {
         await ctx.telegram.banChatMember(ctx.chat.id, target.id);
@@ -1261,10 +1247,10 @@ export function setupCommands(bot: Telegraf) {
           username: target.username ?? null, firstName: target.first_name,
           reason: `Banni par admin après ${maxWarnings} avertissements`, bannedByUserId: getUserId(ctx.from!.id),
         });
-        await ctx.reply(`🔨 *${target.first_name}* banni (max d'avertissements déjà atteint).`, { parse_mode: "Markdown" });
+        await ctx.reply(t(lang, "warn_max_ban", { name: target.first_name }), { parse_mode: "Markdown" });
       } catch (err) {
         logger.error({ err }, "Manual ban failed");
-        await ctx.reply(`⚠️ Impossible de bannir *${target.first_name}*. Vérifiez que le bot a le droit *"Bannir des membres"*.`, { parse_mode: "Markdown" });
+        await ctx.reply(t(lang, "ban_error"), { parse_mode: "Markdown" });
       }
       return;
     }
@@ -1283,7 +1269,7 @@ export function setupCommands(bot: Telegraf) {
     const totalWarns = existing + 1;
 
     if (totalWarns >= maxWarnings) {
-      await ctx.reply(`⚠️ *Avertissement* pour *${target.first_name}*\n📝 ${reason}\n🔢 ${totalWarns}/${maxWarnings} — *Ban automatique en cours...*`, { parse_mode: "Markdown" });
+      await ctx.reply(t(lang, "warn_before_ban", { name: target.first_name, reason, count: totalWarns, max: maxWarnings }), { parse_mode: "Markdown" });
       try {
         await ctx.telegram.banChatMember(ctx.chat.id, target.id);
         await db.insert(botBansTable).values({
@@ -1291,26 +1277,24 @@ export function setupCommands(bot: Telegraf) {
           username: target.username ?? null, firstName: target.first_name,
           reason: `Auto-ban après ${maxWarnings} avertissements`, bannedByUserId: "bot",
         });
-        await ctx.reply(`🔨 *${target.first_name}* banni après ${maxWarnings} avertissements.`, { parse_mode: "Markdown" });
+        await ctx.reply(t(lang, "warn_autoban", { name: target.first_name, max: maxWarnings }), { parse_mode: "Markdown" });
       } catch (err) {
         logger.error({ err }, "Auto-ban after warn failed");
-        await ctx.reply(`⚠️ Impossible de bannir *${target.first_name}* automatiquement. Vérifiez que le bot a le droit *"Bannir des membres"*.`, { parse_mode: "Markdown" });
+        await ctx.reply(t(lang, "ban_error"), { parse_mode: "Markdown" });
       }
     } else {
-      await ctx.reply(
-        `⚠️ *Avertissement* pour *${target.first_name}*\n📝 Raison : ${reason}\n🔢 Total : ${totalWarns}/${maxWarnings}`,
-        { parse_mode: "Markdown" }
-      );
+      await ctx.reply(t(lang, "warn_success", { name: target.first_name, reason, count: totalWarns, max: maxWarnings }), { parse_mode: "Markdown" });
     }
   });
 
   // ─── /ban ─────────────────────────────────────────────────────────────────
   bot.command("ban", async (ctx) => {
     if (ctx.chat.type === "private") return;
-    if (!(await isAdmin(ctx))) return ctx.reply("❌ Réservé aux administrateurs.");
+    const lang = await ctxLang(ctx);
+    if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
     const target = ctx.message.reply_to_message?.from;
-    if (!target) return ctx.reply("↩️ Répondez au message de l'utilisateur à bannir.");
-    if (target.is_bot) return ctx.reply("❌ Impossible de bannir un bot.");
+    if (!target) return ctx.reply(t(lang, "no_reply"));
+    if (target.is_bot) return ctx.reply(t(lang, "cannot_target_bot"));
 
     const reason  = ctx.message.text.split(" ").slice(1).join(" ") || "Raison non spécifiée";
     const groupId = getGroupId(ctx.chat.id);
@@ -1328,19 +1312,20 @@ export function setupCommands(bot: Telegraf) {
         username: target.username ?? null, firstName: target.first_name,
         violationType: "ban", action: "ban", details: reason,
       });
-      await ctx.reply(`🔨 *${target.first_name}* banni.\n📝 Raison : ${reason}`, { parse_mode: "Markdown" });
+      await ctx.reply(t(lang, "ban_success", { name: target.first_name, reason }), { parse_mode: "Markdown" });
     } catch (err) {
       logger.error({ err }, "Ban failed");
-      await ctx.reply("❌ Impossible de bannir. Vérifiez mes droits d'administrateur.");
+      await ctx.reply(t(lang, "ban_error"));
     }
   });
 
   // ─── /unban ───────────────────────────────────────────────────────────────
   bot.command("unban", async (ctx) => {
     if (ctx.chat.type === "private") return;
-    if (!(await isAdmin(ctx))) return ctx.reply("❌ Réservé aux administrateurs.");
+    const lang = await ctxLang(ctx);
+    if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
     const target = ctx.message.reply_to_message?.from;
-    if (!target) return ctx.reply("↩️ Répondez au message de l'utilisateur à débannir.");
+    if (!target) return ctx.reply(t(lang, "no_reply"));
     const groupId = getGroupId(ctx.chat.id);
     const userId  = getUserId(target.id);
     try {
@@ -1348,20 +1333,21 @@ export function setupCommands(bot: Telegraf) {
       await db.update(botBansTable)
         .set({ unbannedAt: new Date() })
         .where(and(eq(botBansTable.telegramGroupId, groupId), eq(botBansTable.telegramUserId, userId), eq(botBansTable.unbannedAt, null as any)));
-      await ctx.reply(`✅ *${target.first_name}* débanni.`, { parse_mode: "Markdown" });
+      await ctx.reply(t(lang, "unban_success", { name: target.first_name }), { parse_mode: "Markdown" });
     } catch (err) {
       logger.error({ err }, "Unban failed");
-      await ctx.reply("❌ Impossible de débannir.");
+      await ctx.reply(t(lang, "unban_error"));
     }
   });
 
   // ─── /kick ────────────────────────────────────────────────────────────────
   bot.command("kick", async (ctx) => {
     if (ctx.chat.type === "private") return;
-    if (!(await isAdmin(ctx))) return ctx.reply("❌ Réservé aux administrateurs.");
+    const lang = await ctxLang(ctx);
+    if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
     const target = ctx.message.reply_to_message?.from;
-    if (!target) return ctx.reply("↩️ Répondez au message de l'utilisateur à expulser.");
-    if (target.is_bot) return ctx.reply("❌ Impossible d'expulser un bot.");
+    if (!target) return ctx.reply(t(lang, "no_reply"));
+    if (target.is_bot) return ctx.reply(t(lang, "cannot_target_bot"));
     const groupId = getGroupId(ctx.chat.id);
     const userId  = getUserId(target.id);
     await ensureGroup(ctx.chat.id, ctx.chat.title ?? "Groupe");
@@ -1373,20 +1359,21 @@ export function setupCommands(bot: Telegraf) {
         username: target.username ?? null, firstName: target.first_name,
         violationType: "kick", action: "kick", details: "Expulsé du groupe",
       });
-      await ctx.reply(`👢 *${target.first_name}* expulsé du groupe.`, { parse_mode: "Markdown" });
+      await ctx.reply(t(lang, "kick_success", { name: target.first_name }), { parse_mode: "Markdown" });
     } catch (err) {
       logger.error({ err }, "Kick failed");
-      await ctx.reply("❌ Impossible d'expulser cet utilisateur.");
+      await ctx.reply(t(lang, "kick_error"));
     }
   });
 
   // ─── /mute ────────────────────────────────────────────────────────────────
   bot.command("mute", async (ctx) => {
     if (ctx.chat.type === "private") return;
-    if (!(await isAdmin(ctx))) return ctx.reply("❌ Réservé aux administrateurs.");
+    const lang = await ctxLang(ctx);
+    if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
     const target = ctx.message.reply_to_message?.from;
-    if (!target) return ctx.reply("↩️ Répondez au message de l'utilisateur à rendre muet.");
-    if (target.is_bot) return ctx.reply("❌ Impossible de rendre un bot muet.");
+    if (!target) return ctx.reply(t(lang, "no_reply"));
+    if (target.is_bot) return ctx.reply(t(lang, "cannot_target_bot"));
     const minutes = parseInt(ctx.message.text.split(" ")[1] ?? "", 10) || 30;
     const untilDate = Math.floor(Date.now() / 1000) + minutes * 60;
     const groupId = getGroupId(ctx.chat.id);
@@ -1402,19 +1389,20 @@ export function setupCommands(bot: Telegraf) {
         username: target.username ?? null, firstName: target.first_name,
         violationType: "mute", action: "mute", details: `Muet ${minutes} min`,
       });
-      await ctx.reply(`🔇 *${target.first_name}* muet pour *${minutes} minutes*.`, { parse_mode: "Markdown" });
+      await ctx.reply(t(lang, "mute_success", { name: target.first_name, min: minutes }), { parse_mode: "Markdown" });
     } catch (err) {
       logger.error({ err }, "Mute failed");
-      await ctx.reply("❌ Impossible de rendre muet. Vérifiez mes droits d'administrateur.");
+      await ctx.reply(t(lang, "mute_error"));
     }
   });
 
   // ─── /unmute ──────────────────────────────────────────────────────────────
   bot.command("unmute", async (ctx) => {
     if (ctx.chat.type === "private") return;
-    if (!(await isAdmin(ctx))) return ctx.reply("❌ Réservé aux administrateurs.");
+    const lang = await ctxLang(ctx);
+    if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
     const target = ctx.message.reply_to_message?.from;
-    if (!target) return ctx.reply("↩️ Répondez au message de l'utilisateur à désilencier.");
+    if (!target) return ctx.reply(t(lang, "no_reply"));
     try {
       await ctx.telegram.restrictChatMember(ctx.chat.id, target.id, {
         permissions: {
@@ -1424,17 +1412,18 @@ export function setupCommands(bot: Telegraf) {
           can_send_other_messages: true, can_add_web_page_previews: true,
         },
       });
-      await ctx.reply(`🔊 *${target.first_name}* peut de nouveau parler.`, { parse_mode: "Markdown" });
+      await ctx.reply(t(lang, "unmute_success", { name: target.first_name }), { parse_mode: "Markdown" });
     } catch (err) {
       logger.error({ err }, "Unmute failed");
-      await ctx.reply("❌ Impossible de lever le silence.");
+      await ctx.reply(t(lang, "unmute_error"));
     }
   });
 
   // ─── /warnings ────────────────────────────────────────────────────────────
   bot.command("warnings", async (ctx) => {
     if (ctx.chat.type === "private") return;
-    if (!(await isAdmin(ctx))) return ctx.reply("❌ Réservé aux administrateurs.");
+    const lang = await ctxLang(ctx);
+    if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
     const target  = ctx.message.reply_to_message?.from ?? ctx.from;
     if (!target) return;
     const groupId = getGroupId(ctx.chat.id);
@@ -1444,38 +1433,39 @@ export function setupCommands(bot: Telegraf) {
     const group = await db.select().from(botGroupsTable).where(eq(botGroupsTable.telegramId, groupId)).limit(1);
     const max = group[0]?.maxWarnings ?? 3;
     if (warns.length === 0) {
-      await ctx.reply(`✅ *${target.first_name}* n'a aucun avertissement.`, { parse_mode: "Markdown" });
+      await ctx.reply(t(lang, "warnings_none", { name: target.first_name }), { parse_mode: "Markdown" });
     } else {
       const list = warns.slice(-5).map((w, i) =>
         `${i + 1}. ${w.reason ?? "Sans raison"} (${new Date(w.createdAt).toLocaleDateString("fr-FR")})`
       ).join("\n");
-      await ctx.reply(`⚠️ *Avertissements de ${target.first_name}* : ${warns.length}/${max}\n\n${list}`, { parse_mode: "Markdown" });
+      await ctx.reply(t(lang, "warnings_list", { name: target.first_name, count: warns.length, max, list }), { parse_mode: "Markdown" });
     }
   });
 
   // ─── /unwarn ──────────────────────────────────────────────────────────────
   bot.command("unwarn", async (ctx) => {
     if (ctx.chat.type === "private") return;
-    if (!(await isAdmin(ctx))) return ctx.reply("❌ Réservé aux administrateurs.");
+    const lang = await ctxLang(ctx);
+    if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
     const target = ctx.message.reply_to_message?.from;
-    if (!target) return ctx.reply("↩️ Répondez au message de l'utilisateur.");
+    if (!target) return ctx.reply(t(lang, "no_reply"));
     const groupId = getGroupId(ctx.chat.id);
     const userId  = getUserId(target.id);
     const lastWarn = await db.select().from(botWarningsTable)
       .where(and(eq(botWarningsTable.telegramGroupId, groupId), eq(botWarningsTable.telegramUserId, userId)))
       .orderBy(botWarningsTable.createdAt).limit(1);
     if (lastWarn.length === 0) {
-      return ctx.reply(`✅ *${target.first_name}* n'a aucun avertissement à retirer.`, { parse_mode: "Markdown" });
+      return ctx.reply(t(lang, "unwarn_none", { name: target.first_name }), { parse_mode: "Markdown" });
     }
     await db.delete(botWarningsTable).where(eq(botWarningsTable.id, lastWarn[0].id));
-    await ctx.reply(`✅ Dernier avertissement de *${target.first_name}* retiré.`, { parse_mode: "Markdown" });
+    await ctx.reply(t(lang, "unwarn_success", { name: target.first_name }), { parse_mode: "Markdown" });
   });
 
   // ─── /filter ─────────────────────────────────────────────────────────────
-  // Usage: /filter mot [delete|warn|mute|ban]
   bot.command("filter", async (ctx) => {
     if (ctx.chat.type === "private") return;
-    if (!(await isAdmin(ctx))) return ctx.reply("❌ Réservé aux administrateurs.");
+    const lang = await ctxLang(ctx);
+    if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
 
     const args   = ctx.message.text.trim().split(/\s+/).slice(1);
     const word   = args[0]?.toLowerCase();
@@ -1483,46 +1473,29 @@ export function setupCommands(bot: Telegraf) {
     const validActions = ["delete", "warn", "mute", "ban"];
     const action = validActions.includes(rawAction ?? "") ? rawAction! : "delete";
 
-    if (!word) {
-      return ctx.reply(
-        "📝 *Ajouter un mot interdit*\n\n" +
-        "Usage : `/filter mot [action]`\n\n" +
-        "Actions disponibles :\n" +
-        "• `delete` — Supprimer le message (défaut)\n" +
-        "• `warn` — Avertir l'utilisateur\n" +
-        "• `mute` — Rendre muet\n" +
-        "• `ban` — Bannir\n\n" +
-        "Exemples :\n" +
-        "`/filter arnaque`\n" +
-        "`/filter casino ban`",
-        { parse_mode: "Markdown" }
-      );
-    }
+    if (!word) return ctx.reply(t(lang, "filter_usage"), { parse_mode: "Markdown" });
 
     const groupId = getGroupId(ctx.chat.id);
     await ensureGroup(ctx.chat.id, ctx.chat.title ?? "Groupe");
 
-    // Vérifier si le mot existe déjà
     const existing = await db.select().from(botWordFiltersTable)
       .where(and(eq(botWordFiltersTable.telegramGroupId, groupId), eq(botWordFiltersTable.word, word)));
     if (existing.length > 0) {
-      // Mettre à jour l'action
       await db.update(botWordFiltersTable)
         .set({ action })
         .where(and(eq(botWordFiltersTable.telegramGroupId, groupId), eq(botWordFiltersTable.word, word)));
-      const actionLabels: Record<string, string> = { delete: "🗑️ Supprimer", warn: "⚠️ Avertir", mute: "🔇 Rendre muet", ban: "🔨 Bannir" };
-      return ctx.reply(`✅ Mot *"${word}"* mis à jour — Action : ${actionLabels[action]}`, { parse_mode: "Markdown" });
+      return ctx.reply(t(lang, "filter_updated", { word, action }), { parse_mode: "Markdown" });
     }
 
     await db.insert(botWordFiltersTable).values({ telegramGroupId: groupId, word, action });
-    const actionLabels: Record<string, string> = { delete: "🗑️ Supprimer", warn: "⚠️ Avertir", mute: "🔇 Rendre muet", ban: "🔨 Bannir" };
-    await ctx.reply(`✅ Mot *"${word}"* ajouté aux filtres.\nAction : ${actionLabels[action]}`, { parse_mode: "Markdown" });
+    await ctx.reply(t(lang, "filter_added", { word, action }), { parse_mode: "Markdown" });
   });
 
   // ─── /filters ────────────────────────────────────────────────────────────
   bot.command("filters", async (ctx) => {
     if (ctx.chat.type === "private") return;
-    if (!(await isAdmin(ctx))) return ctx.reply("❌ Réservé aux administrateurs.");
+    const lang = await ctxLang(ctx);
+    if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
 
     const groupId = getGroupId(ctx.chat.id);
     await ensureGroup(ctx.chat.id, ctx.chat.title ?? "Groupe");
@@ -1532,10 +1505,7 @@ export function setupCommands(bot: Telegraf) {
       .orderBy(botWordFiltersTable.createdAt);
 
     if (filters.length === 0) {
-      return ctx.reply(
-        "📋 *Aucun filtre de mots configuré.*\n\nAjoutez des mots avec `/filter mot [action]`.",
-        { parse_mode: "Markdown" }
-      );
+      return ctx.reply(t(lang, "filters_empty"), { parse_mode: "Markdown" });
     }
 
     const actionLabels: Record<string, string> = { delete: "🗑️", warn: "⚠️", mute: "🔇", ban: "🔨" };
