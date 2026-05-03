@@ -479,6 +479,14 @@ export const translations: Record<string, Record<string, string>> = {
     pt: "📋 *Nenhum filtro de palavras configurado.*\n\nAdicione palavras com `/filter palavra [ação]`.",
     ar: "📋 *لا توجد فلاتر كلمات مضبوطة.*\n\nأضف كلمات بـ `/filter كلمة [إجراء]`.",
   },
+  // ── Commandes réservées aux groupes ──────────────────────────────────────
+  group_only_cmd: {
+    fr: "🛡️ *Cette commande fonctionne uniquement dans un groupe.*\n\nAjoutez-moi à votre groupe en tant qu'administrateur, puis utilisez cette commande là-bas.\n\n👉 /start — pour commencer",
+    en: "🛡️ *This command only works in a group.*\n\nAdd me to your group as an administrator, then use this command there.\n\n👉 /start — to get started",
+    es: "🛡️ *Este comando solo funciona en un grupo.*\n\nAgrégame a tu grupo como administrador y usa este comando allí.\n\n👉 /start — para comenzar",
+    pt: "🛡️ *Este comando só funciona em um grupo.*\n\nAdicione-me ao seu grupo como administrador e use este comando lá.\n\n👉 /start — para começar",
+    ar: "🛡️ *هذا الأمر يعمل فقط في المجموعات.*\n\nأضفني إلى مجموعتك كمشرف ثم استخدم هذا الأمر هناك.\n\n👉 /start — للبدء",
+  },
   // ── /start en privé ───────────────────────────────────────────────────────
   start_private: {
     fr: "🤖 *Bot Modérateur Telegram*\n\nAjoutez-moi à votre groupe, donnez-moi les droits d'administrateur, puis tapez /settings pour configurer et activer la modération.\n\n/settings — ⚙️ Paramètres\n/language — 🌍 Changer de langue\n/help — ❓ Aide complète",

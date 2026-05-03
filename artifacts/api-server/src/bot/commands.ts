@@ -414,6 +414,17 @@ function buildOwnerLinksKeyboard(links: OwnerLink[]): any {
   return { inline_keyboard: rows };
 }
 
+// ─── Helper : répondre si commande utilisée en privé ─────────────────────
+
+async function replyGroupOnly(ctx: any): Promise<boolean> {
+  if (ctx.chat?.type === "private") {
+    const lang = await getUserLang(ctx.from!.id);
+    await ctx.reply(t(lang, "group_only_cmd"), { parse_mode: "Markdown" });
+    return true;
+  }
+  return false;
+}
+
 // ─── Setup ────────────────────────────────────────────────────────────────
 
 export function setupCommands(bot: Telegraf) {
@@ -517,7 +528,7 @@ export function setupCommands(bot: Telegraf) {
 
   // /setwelcome
   bot.command("setwelcome", async (ctx) => {
-    if (ctx.chat.type === "private") return;
+    if (await replyGroupOnly(ctx)) return;
     const lang = await ctxLang(ctx);
     if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
     const text = ctx.message.text.split(" ").slice(1).join(" ").trim();
@@ -534,7 +545,7 @@ export function setupCommands(bot: Telegraf) {
 
   // /setrules
   bot.command("setrules", async (ctx) => {
-    if (ctx.chat.type === "private") return;
+    if (await replyGroupOnly(ctx)) return;
     const lang = await ctxLang(ctx);
     if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
     const text = ctx.message.text.split(" ").slice(1).join(" ").trim();
@@ -548,7 +559,7 @@ export function setupCommands(bot: Telegraf) {
 
   // /rules
   bot.command("rules", async (ctx) => {
-    if (ctx.chat.type === "private") return;
+    if (await replyGroupOnly(ctx)) return;
     const group = await db.select().from(botGroupsTable)
       .where(eq(botGroupsTable.telegramId, getGroupId(ctx.chat.id))).limit(1);
     const glang = group[0]?.language ?? "fr";
@@ -561,7 +572,7 @@ export function setupCommands(bot: Telegraf) {
 
   // /stats
   bot.command("stats", async (ctx) => {
-    if (ctx.chat.type === "private") return;
+    if (await replyGroupOnly(ctx)) return;
     const lang = await ctxLang(ctx);
     if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
     const groupId = getGroupId(ctx.chat.id);
@@ -1220,7 +1231,7 @@ export function setupCommands(bot: Telegraf) {
 
   // ─── /warn ────────────────────────────────────────────────────────────────
   bot.command("warn", async (ctx) => {
-    if (ctx.chat.type === "private") return;
+    if (await replyGroupOnly(ctx)) return;
     const lang = await ctxLang(ctx);
     if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
     const target = ctx.message.reply_to_message?.from;
@@ -1289,7 +1300,7 @@ export function setupCommands(bot: Telegraf) {
 
   // ─── /ban ─────────────────────────────────────────────────────────────────
   bot.command("ban", async (ctx) => {
-    if (ctx.chat.type === "private") return;
+    if (await replyGroupOnly(ctx)) return;
     const lang = await ctxLang(ctx);
     if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
     const target = ctx.message.reply_to_message?.from;
@@ -1321,7 +1332,7 @@ export function setupCommands(bot: Telegraf) {
 
   // ─── /unban ───────────────────────────────────────────────────────────────
   bot.command("unban", async (ctx) => {
-    if (ctx.chat.type === "private") return;
+    if (await replyGroupOnly(ctx)) return;
     const lang = await ctxLang(ctx);
     if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
     const target = ctx.message.reply_to_message?.from;
@@ -1342,7 +1353,7 @@ export function setupCommands(bot: Telegraf) {
 
   // ─── /kick ────────────────────────────────────────────────────────────────
   bot.command("kick", async (ctx) => {
-    if (ctx.chat.type === "private") return;
+    if (await replyGroupOnly(ctx)) return;
     const lang = await ctxLang(ctx);
     if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
     const target = ctx.message.reply_to_message?.from;
@@ -1368,7 +1379,7 @@ export function setupCommands(bot: Telegraf) {
 
   // ─── /mute ────────────────────────────────────────────────────────────────
   bot.command("mute", async (ctx) => {
-    if (ctx.chat.type === "private") return;
+    if (await replyGroupOnly(ctx)) return;
     const lang = await ctxLang(ctx);
     if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
     const target = ctx.message.reply_to_message?.from;
@@ -1398,7 +1409,7 @@ export function setupCommands(bot: Telegraf) {
 
   // ─── /unmute ──────────────────────────────────────────────────────────────
   bot.command("unmute", async (ctx) => {
-    if (ctx.chat.type === "private") return;
+    if (await replyGroupOnly(ctx)) return;
     const lang = await ctxLang(ctx);
     if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
     const target = ctx.message.reply_to_message?.from;
@@ -1421,7 +1432,7 @@ export function setupCommands(bot: Telegraf) {
 
   // ─── /warnings ────────────────────────────────────────────────────────────
   bot.command("warnings", async (ctx) => {
-    if (ctx.chat.type === "private") return;
+    if (await replyGroupOnly(ctx)) return;
     const lang = await ctxLang(ctx);
     if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
     const target  = ctx.message.reply_to_message?.from ?? ctx.from;
@@ -1444,7 +1455,7 @@ export function setupCommands(bot: Telegraf) {
 
   // ─── /unwarn ──────────────────────────────────────────────────────────────
   bot.command("unwarn", async (ctx) => {
-    if (ctx.chat.type === "private") return;
+    if (await replyGroupOnly(ctx)) return;
     const lang = await ctxLang(ctx);
     if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
     const target = ctx.message.reply_to_message?.from;
@@ -1463,7 +1474,7 @@ export function setupCommands(bot: Telegraf) {
 
   // ─── /filter ─────────────────────────────────────────────────────────────
   bot.command("filter", async (ctx) => {
-    if (ctx.chat.type === "private") return;
+    if (await replyGroupOnly(ctx)) return;
     const lang = await ctxLang(ctx);
     if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
 
@@ -1493,7 +1504,7 @@ export function setupCommands(bot: Telegraf) {
 
   // ─── /filters ────────────────────────────────────────────────────────────
   bot.command("filters", async (ctx) => {
-    if (ctx.chat.type === "private") return;
+    if (await replyGroupOnly(ctx)) return;
     const lang = await ctxLang(ctx);
     if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
 
