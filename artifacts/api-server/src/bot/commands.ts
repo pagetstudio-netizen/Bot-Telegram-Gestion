@@ -988,21 +988,22 @@ export function setupCommands(bot: Telegraf) {
             ? { inline_keyboard: [[{ text: btnText, url: btnUrl }]] }
             : undefined;
           const opts: any = { parse_mode: "Markdown", ...(keyboard ? { reply_markup: keyboard } : {}) };
-          const groups = await db.select({ telegramId: botGroupsTable.telegramId }).from(botGroupsTable);
+          // Envoyer en PRIVÉ aux utilisateurs qui ont écrit au bot (marchands)
+          const users = await db.select({ telegramUserId: botUserSettingsTable.telegramUserId }).from(botUserSettingsTable);
           let sent = 0, failed = 0;
-          const statusMsg = await ctx.reply(`📡 Diffusion en cours… 0/${groups.length}`);
-          for (let i = 0; i < groups.length; i++) {
+          const statusMsg = await ctx.reply(`📡 Diffusion en cours… 0/${users.length}`);
+          for (let i = 0; i < users.length; i++) {
             try {
-              await ctx.telegram.sendMessage(Number(groups[i].telegramId), message, opts);
+              await ctx.telegram.sendMessage(Number(users[i].telegramUserId), message, opts);
               sent++;
             } catch { failed++; }
-            if ((i + 1) % 5 === 0 || i === groups.length - 1) {
-              try { await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, undefined, `📡 Diffusion en cours… ${i + 1}/${groups.length}`); } catch {}
+            if ((i + 1) % 5 === 0 || i === users.length - 1) {
+              try { await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, undefined, `📡 Diffusion en cours… ${i + 1}/${users.length}`); } catch {}
             }
-            await new Promise((r) => setTimeout(r, 1000));
+            await new Promise((r) => setTimeout(r, 300));
           }
           await ctx.reply(
-            `✅ *Diffusion terminée !*\n\n📨 Envoyé : *${sent}* groupe(s)\n❌ Échecs : *${failed}*\n📊 Total : *${groups.length}*`,
+            `✅ *Diffusion terminée !*\n\n📨 Envoyé : *${sent}* personne(s)\n❌ Échecs : *${failed}*\n📊 Total : *${users.length}*`,
             { parse_mode: "Markdown" }
           );
           return;

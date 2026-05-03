@@ -292,7 +292,7 @@ export default function OwnerSettings() {
             Diffusion vers tous les groupes
           </CardTitle>
           <CardDescription>
-            Envoyez un message à tous les groupes où votre bot est actif. Supporte le Markdown.
+            Envoyez un message en privé à toutes les personnes qui ont déjà écrit au bot (marchands, propriétaires de groupes). Supporte le Markdown.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

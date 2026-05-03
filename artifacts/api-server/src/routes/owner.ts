@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { botOwnerConfigTable, botGroupsTable } from "@workspace/db";
+import { botOwnerConfigTable, botUserSettingsTable } from "@workspace/db";
 import type { OwnerLink } from "@workspace/db";
-import { eq, isNotNull } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getBot } from "../bot/index";
 import { logger } from "../lib/logger";
 
@@ -21,9 +21,7 @@ function parseLinks(raw: string | null | undefined): OwnerLink[] {
 // ─── GET /api/owner/config ────────────────────────────────────────────────
 router.get("/owner/config", async (_req, res) => {
   const cfg = await getOrCreateConfig();
-  res.json({
-    requiredLinks: parseLinks(cfg?.requiredLinks),
-  });
+  res.json({ requiredLinks: parseLinks(cfg?.requiredLinks) });
 });
 
 // ─── PUT /api/owner/config ────────────────────────────────────────────────
@@ -47,6 +45,7 @@ router.put("/owner/config", async (req, res) => {
 });
 
 // ─── POST /api/owner/broadcast ────────────────────────────────────────────
+// Envoie un message en PRIVÉ à toutes les personnes qui ont écrit au bot
 router.post("/owner/broadcast", async (req, res) => {
   const { message, buttonText, buttonUrl } = req.body as {
     message: string;
@@ -63,9 +62,9 @@ router.post("/owner/broadcast", async (req, res) => {
     return res.status(503).json({ error: "Bot non disponible." });
   }
 
-  const groups = await db.select({ telegramId: botGroupsTable.telegramId })
-    .from(botGroupsTable)
-    .where(isNotNull(botGroupsTable.telegramId));
+  // Récupérer tous les utilisateurs privés (marchands / propriétaires de groupes)
+  const users = await db.select({ telegramUserId: botUserSettingsTable.telegramUserId })
+    .from(botUserSettingsTable);
 
   const keyboard = buttonText && buttonUrl
     ? { inline_keyboard: [[{ text: buttonText, url: buttonUrl }]] }
@@ -74,18 +73,18 @@ router.post("/owner/broadcast", async (req, res) => {
   const opts: any = { parse_mode: "Markdown", ...(keyboard ? { reply_markup: keyboard } : {}) };
 
   let sent = 0, failed = 0;
-  for (const group of groups) {
+  for (const user of users) {
     try {
-      await bot.telegram.sendMessage(Number(group.telegramId), message, opts);
+      await bot.telegram.sendMessage(Number(user.telegramUserId), message, opts);
       sent++;
     } catch (err) {
       failed++;
-      logger.warn({ err, groupId: group.telegramId }, "Broadcast failed for group");
+      logger.warn({ err, userId: user.telegramUserId }, "Broadcast failed for user");
     }
-    await new Promise((r) => setTimeout(r, 1000));
+    await new Promise((r) => setTimeout(r, 300)); // 300ms entre chaque message privé
   }
 
-  res.json({ sent, failed, total: groups.length });
+  res.json({ sent, failed, total: users.length });
 });
 
 export default router;
