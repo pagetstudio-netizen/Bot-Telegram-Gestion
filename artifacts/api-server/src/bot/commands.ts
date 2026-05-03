@@ -1,6 +1,7 @@
 import { Telegraf } from "telegraf";
 import { db } from "@workspace/db";
-import { botGroupsTable, botWarningsTable, botBansTable, botViolationsTable, botWordFiltersTable, botUserSettingsTable } from "@workspace/db";
+import { botGroupsTable, botWarningsTable, botBansTable, botViolationsTable, botWordFiltersTable, botUserSettingsTable, botOwnerConfigTable } from "@workspace/db";
+import type { OwnerLink } from "@workspace/db";
 import { eq, and, count } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import { t, SUPPORTED_LANGUAGES } from "./translations";
@@ -303,6 +304,66 @@ const pendingInputs = new Map<
   { type: string; groupId: string; chatId: number; messageId?: number }
 >();
 
+// ─── Owner panel helpers ───────────────────────────────────────────────────
+
+const pendingOwnerInputs = new Map<number, { step: string; data: Record<string, string> }>();
+
+async function getOwnerLinks(): Promise<OwnerLink[]> {
+  const [cfg] = await db.select().from(botOwnerConfigTable).limit(1);
+  if (!cfg?.requiredLinks) return [];
+  try { return JSON.parse(cfg.requiredLinks); } catch { return []; }
+}
+
+async function saveOwnerLinks(links: OwnerLink[]): Promise<void> {
+  const [existing] = await db.select().from(botOwnerConfigTable).limit(1);
+  const json = links.length > 0 ? JSON.stringify(links) : null;
+  if (existing) {
+    await db.update(botOwnerConfigTable).set({ requiredLinks: json, updatedAt: new Date() }).where(eq(botOwnerConfigTable.id, existing.id));
+  } else {
+    await db.insert(botOwnerConfigTable).values({ requiredLinks: json });
+  }
+}
+
+function buildOwnerMenuText(): string {
+  return "🔧 *Panel Propriétaire*\n\nBienvenue dans le panneau d'administration de votre bot. Choisissez une option :";
+}
+
+function buildOwnerMenuKeyboard(): any {
+  return {
+    inline_keyboard: [
+      [{ text: "🔗 Liens obligatoires", callback_data: "owner:links" }],
+      [{ text: "📡 Diffusion globale",  callback_data: "owner:broadcast" }],
+      [{ text: "📊 Statistiques",       callback_data: "owner:stats" }],
+    ],
+  };
+}
+
+function buildOwnerLinksText(links: OwnerLink[]): string {
+  if (links.length === 0) {
+    return "🔗 *Liens obligatoires*\n\n_Aucun lien configuré._ Les membres peuvent écrire librement dans tous les groupes.";
+  }
+  const list = links.map((l, i) =>
+    `${i + 1}. ${l.type === "channel" ? "📢" : "🌐"} *${l.title}*  —  \`${l.value}\``
+  ).join("\n");
+  return `🔗 *Liens obligatoires* (${links.length})\n\nLes membres doivent rejoindre tous les canaux 📢 pour pouvoir écrire :\n\n${list}`;
+}
+
+function buildOwnerLinksKeyboard(links: OwnerLink[]): any {
+  const rows: any[][] = [];
+  links.forEach((l, i) => {
+    rows.push([
+      { text: `${l.type === "channel" ? "📢" : "🌐"} ${l.title}`, callback_data: "owner:noop" },
+      { text: "🗑️ Supprimer", callback_data: `owner:removelink:${i}` },
+    ]);
+  });
+  rows.push([
+    { text: "📢 + Canal Telegram", callback_data: "owner:addlink:channel" },
+    { text: "🌐 + Site Web",       callback_data: "owner:addlink:website"  },
+  ]);
+  rows.push([{ text: "← Menu principal", callback_data: "owner:menu" }]);
+  return { inline_keyboard: rows };
+}
+
 // ─── Setup ────────────────────────────────────────────────────────────────
 
 export function setupCommands(bot: Telegraf) {
@@ -354,6 +415,21 @@ export function setupCommands(bot: Telegraf) {
         reply_markup: { inline_keyboard: rows },
       });
     }
+  });
+
+  // /owner — Panel propriétaire (privé uniquement, nécessite BOT_OWNER_ID)
+  bot.command("owner", async (ctx) => {
+    if (ctx.chat.type !== "private") {
+      return ctx.reply("🔒 Utilisez /owner en message privé avec le bot.");
+    }
+    const ownerId = parseInt(process.env["BOT_OWNER_ID"] ?? "0");
+    if (!ownerId || ctx.from!.id !== ownerId) {
+      return ctx.reply("❌ Accès refusé.");
+    }
+    await ctx.reply(buildOwnerMenuText(), {
+      parse_mode: "Markdown",
+      reply_markup: buildOwnerMenuKeyboard(),
+    });
   });
 
   // /help
@@ -540,6 +616,83 @@ export function setupCommands(bot: Telegraf) {
       }
 
       return;
+    }
+
+    // ── Callbacks du panel propriétaire (privé uniquement) ────────────────────
+    if (action === "owner") {
+      const ownerId = parseInt(process.env["BOT_OWNER_ID"] ?? "0");
+      if (!ownerId || ctx.from!.id !== ownerId) {
+        return ctx.answerCbQuery("❌ Accès refusé.", { show_alert: true });
+      }
+      const sub = parts[1];
+
+      if (sub === "noop") return ctx.answerCbQuery();
+
+      if (sub === "menu") {
+        await ctx.answerCbQuery();
+        try { await ctx.editMessageText(buildOwnerMenuText(), { parse_mode: "Markdown", reply_markup: buildOwnerMenuKeyboard() }); } catch {}
+        return;
+      }
+
+      if (sub === "links") {
+        const links = await getOwnerLinks();
+        await ctx.answerCbQuery();
+        try { await ctx.editMessageText(buildOwnerLinksText(links), { parse_mode: "Markdown", reply_markup: buildOwnerLinksKeyboard(links) }); } catch {}
+        return;
+      }
+
+      if (sub === "addlink") {
+        const linkType = parts[2] as "channel" | "website";
+        pendingOwnerInputs.set(ctx.from!.id, { step: `ownerLinkValue:${linkType}`, data: { type: linkType } });
+        await ctx.answerCbQuery();
+        const prompt = linkType === "channel"
+          ? "📢 Envoyez le *@username* ou l'*ID numérique* du canal \\(ex: `@moncanal` ou `-1001234567890`\\)\n\nPour annuler, tapez /owner"
+          : "🌐 Envoyez l'*URL* du site web \\(ex: `https://monsite.com`\\)\n\nPour annuler, tapez /owner";
+        await ctx.reply(prompt, { parse_mode: "MarkdownV2" });
+        return;
+      }
+
+      if (sub === "removelink") {
+        const idx = parseInt(parts[2] ?? "", 10);
+        const links = await getOwnerLinks();
+        if (isNaN(idx) || idx < 0 || idx >= links.length) return ctx.answerCbQuery("❌ Lien introuvable.");
+        const removed = links.splice(idx, 1)[0];
+        await saveOwnerLinks(links);
+        await ctx.answerCbQuery(`🗑️ "${removed.title}" supprimé.`);
+        try { await ctx.editMessageText(buildOwnerLinksText(links), { parse_mode: "Markdown", reply_markup: buildOwnerLinksKeyboard(links) }); } catch {}
+        return;
+      }
+
+      if (sub === "broadcast") {
+        pendingOwnerInputs.set(ctx.from!.id, { step: "ownerBroadcastMsg", data: {} });
+        await ctx.answerCbQuery();
+        await ctx.reply(
+          "📡 *Diffusion globale*\n\nRédigez votre message \\(Markdown supporté\\)\\.\n\nPour ajouter un bouton, ajoutez en *dernière ligne* : `[Texte \\| https://url\\.com]`\n\nPour annuler : /owner",
+          { parse_mode: "MarkdownV2" }
+        );
+        return;
+      }
+
+      if (sub === "stats") {
+        const [totalGroups]   = await db.select({ count: count() }).from(botGroupsTable);
+        const [totalWarnings] = await db.select({ count: count() }).from(botWarningsTable);
+        const [totalBans]     = await db.select({ count: count() }).from(botBansTable).where(eq(botBansTable.unbannedAt, null as any));
+        const links = await getOwnerLinks();
+        await ctx.answerCbQuery();
+        try {
+          await ctx.editMessageText(
+            `📊 *Statistiques globales*\n\n` +
+            `👥 Groupes : *${totalGroups?.count ?? 0}*\n` +
+            `⚠️ Avertissements : *${totalWarnings?.count ?? 0}*\n` +
+            `🔨 Bans actifs : *${totalBans?.count ?? 0}*\n\n` +
+            `🔗 Liens obligatoires : *${links.length}*`,
+            { parse_mode: "Markdown", reply_markup: { inline_keyboard: [[{ text: "← Retour", callback_data: "owner:menu" }]] } }
+          );
+        } catch {}
+        return;
+      }
+
+      return ctx.answerCbQuery();
     }
 
     // ── Guard admin pour tous les autres callbacks (paramètres, modération) ──
@@ -774,6 +927,92 @@ export function setupCommands(bot: Telegraf) {
 
   // ─── Réponses texte aux saisies en attente ────────────────────────────────
   bot.on("text", async (ctx, next) => {
+
+    // ── Owner panel pending inputs (privé, prioritaire) ────────────────────
+    const ownerId = parseInt(process.env["BOT_OWNER_ID"] ?? "0");
+    if (ctx.chat.type === "private" && ownerId && ctx.from.id === ownerId) {
+      const ownerPending = pendingOwnerInputs.get(ctx.from.id);
+      if (ownerPending) {
+        const val = ctx.message.text.trim();
+        const { step, data } = ownerPending;
+
+        // Étape 1 : valeur du lien (canal ou site)
+        if (step.startsWith("ownerLinkValue:")) {
+          const linkType = step.split(":")[1] as "channel" | "website";
+          const isValid = linkType === "channel"
+            ? (val.startsWith("@") || val.startsWith("-"))
+            : val.startsWith("http");
+          if (!isValid) {
+            const hint = linkType === "channel"
+              ? "❌ Format invalide. Envoyez `@username` ou un ID numérique (ex: `-1001234567890`)"
+              : "❌ Format invalide. L'URL doit commencer par `https://`";
+            return ctx.reply(hint, { parse_mode: "Markdown" });
+          }
+          pendingOwnerInputs.set(ctx.from.id, { step: "ownerLinkTitle", data: { ...data, value: val } });
+          const prompt = linkType === "channel"
+            ? `✅ Canal : \`${val}\`\n\nMaintenant envoyez le *nom affiché* dans le bouton (ex: "Mon Canal Officiel")`
+            : `✅ URL : \`${val}\`\n\nMaintenant envoyez le *nom affiché* dans le bouton (ex: "Notre Site Web")`;
+          return ctx.reply(prompt, { parse_mode: "Markdown" });
+        }
+
+        // Étape 2 : titre du lien
+        if (step === "ownerLinkTitle") {
+          pendingOwnerInputs.delete(ctx.from.id);
+          const links = await getOwnerLinks();
+          const newLink: OwnerLink = { type: data.type as "channel" | "website", value: data.value, title: val };
+          links.push(newLink);
+          await saveOwnerLinks(links);
+          await ctx.reply(
+            `✅ *Lien ajouté !*\n\n${newLink.type === "channel" ? "📢 Canal" : "🌐 Site"} : *${val}*\n\`${newLink.value}\`\n\nTotal : ${links.length} lien(s) configuré(s).\n\nTapez /owner pour voir le panel.`,
+            { parse_mode: "Markdown" }
+          );
+          return;
+        }
+
+        // Étape broadcast : message
+        if (step === "ownerBroadcastMsg") {
+          pendingOwnerInputs.delete(ctx.from.id);
+          const lines = val.split("\n");
+          const lastLine = lines[lines.length - 1]?.trim() ?? "";
+          let message = val;
+          let btnText: string | undefined;
+          let btnUrl: string | undefined;
+          const btnMatch = lastLine.match(/^\[(.+?)\s*\|\s*(https?:\/\/.+?)\]$/);
+          if (btnMatch) {
+            lines.pop();
+            message = lines.join("\n").trim();
+            btnText = btnMatch[1].trim();
+            btnUrl  = btnMatch[2].trim();
+          }
+          const keyboard = btnText && btnUrl
+            ? { inline_keyboard: [[{ text: btnText, url: btnUrl }]] }
+            : undefined;
+          const opts: any = { parse_mode: "Markdown", ...(keyboard ? { reply_markup: keyboard } : {}) };
+          const groups = await db.select({ telegramId: botGroupsTable.telegramId }).from(botGroupsTable);
+          let sent = 0, failed = 0;
+          const statusMsg = await ctx.reply(`📡 Diffusion en cours… 0/${groups.length}`);
+          for (let i = 0; i < groups.length; i++) {
+            try {
+              await ctx.telegram.sendMessage(Number(groups[i].telegramId), message, opts);
+              sent++;
+            } catch { failed++; }
+            if ((i + 1) % 5 === 0 || i === groups.length - 1) {
+              try { await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, undefined, `📡 Diffusion en cours… ${i + 1}/${groups.length}`); } catch {}
+            }
+            await new Promise((r) => setTimeout(r, 1000));
+          }
+          await ctx.reply(
+            `✅ *Diffusion terminée !*\n\n📨 Envoyé : *${sent}* groupe(s)\n❌ Échecs : *${failed}*\n📊 Total : *${groups.length}*`,
+            { parse_mode: "Markdown" }
+          );
+          return;
+        }
+
+        pendingOwnerInputs.delete(ctx.from.id);
+        return next();
+      }
+    }
+
     let pendingKey: string | null = null;
     let pending: { type: string; groupId: string; chatId: number; messageId?: number } | null = null;
 

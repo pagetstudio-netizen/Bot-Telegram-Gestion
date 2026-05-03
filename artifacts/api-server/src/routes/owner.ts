@@ -1,35 +1,41 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { botOwnerConfigTable, botGroupsTable } from "@workspace/db";
+import type { OwnerLink } from "@workspace/db";
 import { eq, isNotNull } from "drizzle-orm";
 import { getBot } from "../bot/index";
 import { logger } from "../lib/logger";
 
 const router = Router();
 
+async function getOrCreateConfig() {
+  const [existing] = await db.select().from(botOwnerConfigTable).limit(1);
+  return existing ?? null;
+}
+
+function parseLinks(raw: string | null | undefined): OwnerLink[] {
+  if (!raw) return [];
+  try { return JSON.parse(raw); } catch { return []; }
+}
+
 // ─── GET /api/owner/config ────────────────────────────────────────────────
 router.get("/owner/config", async (_req, res) => {
-  const [config] = await db.select().from(botOwnerConfigTable).limit(1);
-  res.json(config ?? { requiredChannel: null, requiredChannelTitle: null, requiredChannelMsg: null });
+  const cfg = await getOrCreateConfig();
+  res.json({
+    requiredLinks: parseLinks(cfg?.requiredLinks),
+  });
 });
 
 // ─── PUT /api/owner/config ────────────────────────────────────────────────
 router.put("/owner/config", async (req, res) => {
-  const { requiredChannel, requiredChannelTitle, requiredChannelMsg } = req.body as {
-    requiredChannel?: string | null;
-    requiredChannelTitle?: string | null;
-    requiredChannelMsg?: string | null;
-  };
-
-  const [existing] = await db.select().from(botOwnerConfigTable).limit(1);
+  const { requiredLinks } = req.body as { requiredLinks?: OwnerLink[] };
 
   const data = {
-    requiredChannel: requiredChannel?.trim() || null,
-    requiredChannelTitle: requiredChannelTitle?.trim() || null,
-    requiredChannelMsg: requiredChannelMsg?.trim() || null,
+    requiredLinks: requiredLinks && requiredLinks.length > 0 ? JSON.stringify(requiredLinks) : null,
     updatedAt: new Date(),
   };
 
+  const existing = await getOrCreateConfig();
   let result;
   if (existing) {
     [result] = await db.update(botOwnerConfigTable).set(data).where(eq(botOwnerConfigTable.id, existing.id)).returning();
@@ -37,16 +43,15 @@ router.put("/owner/config", async (req, res) => {
     [result] = await db.insert(botOwnerConfigTable).values(data).returning();
   }
 
-  res.json(result);
+  res.json({ requiredLinks: parseLinks(result.requiredLinks) });
 });
 
 // ─── POST /api/owner/broadcast ────────────────────────────────────────────
 router.post("/owner/broadcast", async (req, res) => {
-  const { message, buttonText, buttonUrl, photoFileId } = req.body as {
+  const { message, buttonText, buttonUrl } = req.body as {
     message: string;
     buttonText?: string;
     buttonUrl?: string;
-    photoFileId?: string;
   };
 
   if (!message?.trim()) {
@@ -58,7 +63,7 @@ router.post("/owner/broadcast", async (req, res) => {
     return res.status(503).json({ error: "Bot non disponible." });
   }
 
-  const groups = await db.select({ telegramId: botGroupsTable.telegramId, title: botGroupsTable.title })
+  const groups = await db.select({ telegramId: botGroupsTable.telegramId })
     .from(botGroupsTable)
     .where(isNotNull(botGroupsTable.telegramId));
 
@@ -68,22 +73,15 @@ router.post("/owner/broadcast", async (req, res) => {
 
   const opts: any = { parse_mode: "Markdown", ...(keyboard ? { reply_markup: keyboard } : {}) };
 
-  let sent = 0;
-  let failed = 0;
-
+  let sent = 0, failed = 0;
   for (const group of groups) {
     try {
-      if (photoFileId) {
-        await bot.telegram.sendPhoto(Number(group.telegramId), photoFileId, { ...opts, caption: message });
-      } else {
-        await bot.telegram.sendMessage(Number(group.telegramId), message, opts);
-      }
+      await bot.telegram.sendMessage(Number(group.telegramId), message, opts);
       sent++;
     } catch (err) {
       failed++;
       logger.warn({ err, groupId: group.telegramId }, "Broadcast failed for group");
     }
-    // Rate limit : 1 msg/s pour éviter le flood Telegram
     await new Promise((r) => setTimeout(r, 1000));
   }
 

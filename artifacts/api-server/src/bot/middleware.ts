@@ -287,22 +287,39 @@ export function setupMiddleware(bot: Telegraf) {
 
     const lang = group.language ?? "fr";
 
-    // ── Canal obligatoire (global propriétaire) ──────────────────────────────
+    // ── Liens obligatoires (global propriétaire) ─────────────────────────────
     const ownerCfg = await getOwnerConfig();
-    if (ownerCfg?.requiredChannel) {
-      const isMember = await isChannelMember(ctx.telegram, ownerCfg.requiredChannel, userId);
-      if (!isMember) {
+    type OLink = { type: "channel" | "website"; value: string; title: string };
+    const allLinks: OLink[] = ownerCfg?.requiredLinks
+      ? (() => { try { return JSON.parse(ownerCfg.requiredLinks); } catch { return []; } })()
+      : [];
+
+    if (allLinks.length > 0) {
+      const failedChannels: OLink[] = [];
+      for (const link of allLinks) {
+        if (link.type === "channel") {
+          const ok = await isChannelMember(ctx.telegram, link.value, userId);
+          if (!ok) failedChannels.push(link);
+        }
+      }
+      if (failedChannels.length > 0) {
         try { await ctx.deleteMessage(); } catch {}
-        const channelTitle = ownerCfg.requiredChannelTitle || ownerCfg.requiredChannel;
-        const channelLink = ownerCfg.requiredChannel.startsWith("@")
-          ? `https://t.me/${ownerCfg.requiredChannel.slice(1)}`
-          : `https://t.me/c/${String(ownerCfg.requiredChannel).replace("-100", "")}`;
-        const msgText = ownerCfg.requiredChannelMsg || t(lang, "required_channel_msg");
+        const buttons = [
+          ...failedChannels.map((l) => [{
+            text: `📢 ${l.title || l.value}`,
+            url: l.value.startsWith("@")
+              ? `https://t.me/${l.value.slice(1)}`
+              : `https://t.me/c/${String(l.value).replace("-100", "")}`,
+          }]),
+          ...allLinks.filter((l) => l.type === "website").map((l) => [{
+            text: `🌐 ${l.title || l.value}`,
+            url: l.value,
+          }]),
+        ];
+        const msgText = ownerCfg?.requiredChannelMsg || t(lang, "required_channel_msg");
         const sent = await ctx.reply(msgText, {
           parse_mode: "Markdown",
-          reply_markup: {
-            inline_keyboard: [[{ text: `📢 ${channelTitle}`, url: channelLink }]],
-          },
+          reply_markup: { inline_keyboard: buttons },
         });
         setTimeout(async () => {
           try { await ctx.telegram.deleteMessage(ctx.chat.id, sent.message_id); } catch {}
