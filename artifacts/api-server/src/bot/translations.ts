@@ -487,6 +487,14 @@ export const translations: Record<string, Record<string, string>> = {
     pt: "🛡️ *Este comando só funciona em um grupo.*\n\nAdicione-me ao seu grupo como administrador e use este comando lá.\n\n👉 /start — para começar",
     ar: "🛡️ *هذا الأمر يعمل فقط في المجموعات.*\n\nأضفني إلى مجموعتك كمشرف ثم استخدم هذا الأمر هناك.\n\n👉 /start — للبدء",
   },
+  // ── Bouton ajouter dans un groupe ────────────────────────────────────────
+  add_to_group_btn: {
+    fr: "➕ Ajouter dans un groupe",
+    en: "➕ Add to a group",
+    es: "➕ Agregar a un grupo",
+    pt: "➕ Adicionar a um grupo",
+    ar: "➕ إضافة إلى مجموعة",
+  },
   // ── /start en privé ───────────────────────────────────────────────────────
   start_private: {
     fr: "🤖 *Bot Modérateur Telegram*\n\nAjoutez-moi à votre groupe, donnez-moi les droits d'administrateur, puis tapez /settings pour configurer et activer la modération.\n\n/settings — ⚙️ Paramètres\n/language — 🌍 Changer de langue\n/help — ❓ Aide complète",

@@ -419,7 +419,16 @@ function buildOwnerLinksKeyboard(links: OwnerLink[]): any {
 async function replyGroupOnly(ctx: any): Promise<boolean> {
   if (ctx.chat?.type === "private") {
     const lang = await getUserLang(ctx.from!.id);
-    await ctx.reply(t(lang, "group_only_cmd"), { parse_mode: "Markdown" });
+    const username = ctx.botInfo?.username;
+    await ctx.reply(t(lang, "group_only_cmd"), {
+      parse_mode: "Markdown",
+      reply_markup: username ? {
+        inline_keyboard: [[{
+          text: t(lang, "add_to_group_btn"),
+          url: `https://t.me/${username}?startgroup=true`,
+        }]],
+      } : undefined,
+    });
     return true;
   }
   return false;
@@ -443,7 +452,16 @@ export function setupCommands(bot: Telegraf) {
         return;
       }
 
-      await ctx.reply(t(lang, "start_private"), { parse_mode: "Markdown" });
+      const username = ctx.botInfo?.username;
+      await ctx.reply(t(lang, "start_private"), {
+        parse_mode: "Markdown",
+        reply_markup: username ? {
+          inline_keyboard: [[{
+            text: t(lang, "add_to_group_btn"),
+            url: `https://t.me/${username}?startgroup=true`,
+          }]],
+        } : undefined,
+      });
     }
   });
 
