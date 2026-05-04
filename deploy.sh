@@ -12,10 +12,14 @@ echo "==> pnpm version: $(pnpm --version)"
 echo "==> Installation des dépendances..."
 pnpm install --no-frozen-lockfile
 
-echo "==> Build du serveur..."
+echo "==> Build du dashboard (React)..."
+BASE_PATH=/ pnpm --filter @workspace/dashboard run build
+
+echo "==> Build du serveur (API + Bot)..."
 pnpm --filter @workspace/api-server run build
 
 echo ""
 echo "✅ Build terminé !"
-echo "   Fichier de démarrage : artifacts/api-server/dist/index.mjs"
-echo "   Commande de démarrage : node artifacts/api-server/dist/index.mjs"
+echo "   Dashboard : artifacts/dashboard/dist/public/"
+echo "   Serveur   : artifacts/api-server/dist/index.mjs"
+echo "   Démarrage : node artifacts/api-server/dist/index.mjs"

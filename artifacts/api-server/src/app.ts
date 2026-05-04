@@ -1,6 +1,8 @@
 import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
+import path from "path";
+import fs from "fs";
 import router from "./routes";
 import { logger } from "./lib/logger";
 
@@ -30,5 +32,19 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", router);
+
+// Serve dashboard static files (built by Vite)
+const dashboardDist = path.resolve(process.cwd(), "artifacts/dashboard/dist/public");
+if (fs.existsSync(dashboardDist)) {
+  app.use(express.static(dashboardDist));
+  // SPA fallback: toutes les routes non-API renvoient index.html
+  app.get("*", (_req, res) => {
+    res.sendFile(path.join(dashboardDist, "index.html"));
+  });
+} else {
+  app.get("/", (_req, res) => {
+    res.json({ status: "ok", message: "API running. Dashboard not built." });
+  });
+}
 
 export default app;
