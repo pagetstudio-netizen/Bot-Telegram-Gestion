@@ -37,8 +37,8 @@ app.use("/api", router);
 const dashboardDist = path.resolve(process.cwd(), "artifacts/dashboard/dist/public");
 if (fs.existsSync(dashboardDist)) {
   app.use(express.static(dashboardDist));
-  // SPA fallback: toutes les routes non-API renvoient index.html
-  app.get("*", (_req, res) => {
+  // SPA fallback: toutes les routes non-API renvoient index.html (Express 5 syntax)
+  app.get("/{*path}", (_req, res) => {
     res.sendFile(path.join(dashboardDist, "index.html"));
   });
 } else {
