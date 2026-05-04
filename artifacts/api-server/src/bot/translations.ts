@@ -530,6 +530,13 @@ export const translations: Record<string, Record<string, string>> = {
     pt: "➕ Adicionar a um grupo",
     ar: "➕ إضافة إلى مجموعة",
   },
+  btn_support: {
+    fr: "💬 Support",
+    en: "💬 Support",
+    es: "💬 Soporte",
+    pt: "💬 Suporte",
+    ar: "💬 الدعم",
+  },
   // ── /start en privé ───────────────────────────────────────────────────────
   start_private: {
     fr: "🤖 *Bot Modérateur Telegram*\n\nAjoutez-moi à votre groupe, donnez-moi les droits d'administrateur, puis tapez /settings pour configurer et activer la modération.\n\n/settings — ⚙️ Paramètres\n/language — 🌍 Changer de langue\n/help — ❓ Aide complète",
