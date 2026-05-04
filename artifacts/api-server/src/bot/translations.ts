@@ -175,6 +175,41 @@ export const translations: Record<string, Record<string, string>> = {
     pt: "⚙️ Abrir configurações",
     ar: "⚙️ فتح الإعدادات",
   },
+  btn_configure_private: {
+    fr: "🔒 Configurer en privé",
+    en: "🔒 Configure in private",
+    es: "🔒 Configurar en privado",
+    pt: "🔒 Configurar em privado",
+    ar: "🔒 الإعداد في الخاص",
+  },
+  btn_configure_here: {
+    fr: "⚙️ Configurer ici",
+    en: "⚙️ Configure here",
+    es: "⚙️ Configurar aquí",
+    pt: "⚙️ Configurar aqui",
+    ar: "⚙️ الإعداد هنا",
+  },
+  setup_private_not_admin: {
+    fr: "❌ Vous devez être *administrateur* de ce groupe pour le configurer.",
+    en: "❌ You must be an *administrator* of this group to configure it.",
+    es: "❌ Debes ser *administrador* de este grupo para configurarlo.",
+    pt: "❌ Você precisa ser *administrador* deste grupo para configurá-lo.",
+    ar: "❌ يجب أن تكون *مشرفاً* في هذه المجموعة لتتمكن من إعدادها.",
+  },
+  setup_private_group_not_found: {
+    fr: "❌ Groupe introuvable. Assurez-vous que le bot est bien dans le groupe.",
+    en: "❌ Group not found. Make sure the bot is still in the group.",
+    es: "❌ Grupo no encontrado. Asegúrate de que el bot sigue en el grupo.",
+    pt: "❌ Grupo não encontrado. Certifique-se de que o bot ainda está no grupo.",
+    ar: "❌ المجموعة غير موجودة. تأكد من أن البوت لا يزال في المجموعة.",
+  },
+  setup_private_intro: {
+    fr: "🔧 *Configuration de \"{title}\"*\n\nTous les changements sont appliqués immédiatement dans le groupe.",
+    en: "🔧 *Configuration of \"{title}\"*\n\nAll changes are applied immediately in the group.",
+    es: "🔧 *Configuración de \"{title}\"*\n\nTodos los cambios se aplican inmediatamente en el grupo.",
+    pt: "🔧 *Configuração de \"{title}\"*\n\nTodas as alterações são aplicadas imediatamente no grupo.",
+    ar: "🔧 *إعداد \"{title}\"*\n\nيتم تطبيق جميع التغييرات فوراً في المجموعة.",
+  },
   // ── Commandes ─────────────────────────────────────────────────────────────
   rules_not_set: {
     fr: "📋 Aucune règle n'a encore été définie pour ce groupe.",

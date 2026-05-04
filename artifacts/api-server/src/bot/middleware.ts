@@ -546,17 +546,32 @@ export function setupMiddleware(bot: Telegraf) {
     const lang = group?.language ?? "fr";
     const msgKey = hasAdminRights ? "bot_added_admin" : "bot_added_no_admin";
 
+    const botUsername = ctx.botInfo?.username;
+    const configPrivateUrl = botUsername
+      ? `https://t.me/${botUsername}?start=setup_${groupId}`
+      : null;
+
+    const inlineKeyboard: any[][] = [
+      [{ text: t(lang, "btn_set_rules"), callback_data: `set:rules:${groupId}` }],
+    ];
+
+    if (configPrivateUrl) {
+      inlineKeyboard.push([
+        { text: t(lang, "btn_configure_private"), url: configPrivateUrl },
+        { text: t(lang, "btn_configure_here"),    callback_data: `open:settings:${groupId}` },
+      ]);
+    } else {
+      inlineKeyboard.push([
+        { text: t(lang, "btn_open_settings"), callback_data: `open:settings:${groupId}` },
+      ]);
+    }
+
     await ctx.telegram.sendMessage(
       chatId,
       t(lang, msgKey),
       {
         parse_mode: "Markdown",
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: t(lang, "btn_set_rules"),     callback_data: `set:rules:${groupId}` }],
-            [{ text: t(lang, "btn_open_settings"), callback_data: `open:settings:${groupId}` }],
-          ],
-        },
+        reply_markup: { inline_keyboard: inlineKeyboard },
       }
     );
     logger.info({ chatId, title, hasAdminRights }, "Bot added to group");

@@ -443,6 +443,50 @@ export function setupCommands(bot: Telegraf) {
     if (ctx.chat.type === "private") {
       const lang = await getUserLang(ctx.from!.id);
 
+      // ── Deep link : configuration privée d'un groupe ─────────────────────
+      const payload = (ctx.message as any)?.text?.split(" ")[1] ?? "";
+      if (payload.startsWith("setup_")) {
+        const groupId = payload.slice(6); // e.g. "-1001234567890"
+        const numericGroupId = parseInt(groupId, 10);
+
+        // Vérifier que l'utilisateur est admin du groupe
+        let isGroupAdmin = false;
+        try {
+          const member = await ctx.telegram.getChatMember(numericGroupId, ctx.from!.id);
+          isGroupAdmin = ["administrator", "creator"].includes(member.status);
+        } catch {
+          isGroupAdmin = false;
+        }
+
+        if (!isGroupAdmin) {
+          await ctx.reply(t(lang, "setup_private_not_admin"), { parse_mode: "Markdown" });
+          return;
+        }
+
+        const group = await db
+          .select()
+          .from(botGroupsTable)
+          .where(eq(botGroupsTable.telegramId, groupId))
+          .limit(1)
+          .then((r) => r[0]);
+
+        if (!group) {
+          await ctx.reply(t(lang, "setup_private_group_not_found"), { parse_mode: "Markdown" });
+          return;
+        }
+
+        const introText =
+          t(lang, "setup_private_intro", { title: group.title }) +
+          "\n\n" +
+          buildSettingsText(group);
+
+        await ctx.reply(introText, {
+          parse_mode: "Markdown",
+          reply_markup: buildSettingsKeyboard(group),
+        });
+        return;
+      }
+
       // Vérifier les canaux obligatoires
       const { ok, failed } = await checkRequiredChannels(ctx.telegram, ctx.from!.id);
       if (!ok) {
