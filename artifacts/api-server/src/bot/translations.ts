@@ -537,6 +537,13 @@ export const translations: Record<string, Record<string, string>> = {
     pt: "💬 Suporte",
     ar: "💬 الدعم",
   },
+  support_text: {
+    fr: "💬 *Support*\n\nPour toute question ou problème, contactez notre support directement sur Telegram :",
+    en: "💬 *Support*\n\nFor any question or issue, contact our support directly on Telegram:",
+    es: "💬 *Soporte*\n\nPara cualquier pregunta o problema, contacta a nuestro soporte directamente en Telegram:",
+    pt: "💬 *Suporte*\n\nPara qualquer dúvida ou problema, entre em contato com nosso suporte diretamente no Telegram:",
+    ar: "💬 *الدعم*\n\nلأي سؤال أو مشكلة، تواصل مع فريق الدعم مباشرة على تيليغرام:",
+  },
   // ── /start en privé ───────────────────────────────────────────────────────
   start_private: {
     fr: "🤖 *Bot Modérateur Telegram*\n\nAjoutez-moi à votre groupe, donnez-moi les droits d'administrateur, puis tapez /settings pour configurer et activer la modération.\n\n/settings — ⚙️ Paramètres\n/language — 🌍 Changer de langue\n/help — ❓ Aide complète",

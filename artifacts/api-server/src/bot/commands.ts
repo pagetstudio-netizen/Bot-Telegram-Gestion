@@ -499,15 +499,12 @@ export function setupCommands(bot: Telegraf) {
       const username = ctx.botInfo?.username;
       await ctx.reply(t(lang, "start_private"), {
         parse_mode: "Markdown",
-        reply_markup: {
-          inline_keyboard: [
-            ...(username ? [[{
-              text: t(lang, "add_to_group_btn"),
-              url: `https://t.me/${username}?startgroup=true`,
-            }]] : []),
-            [{ text: t(lang, "btn_support"), url: "https://t.me/Backstreetdev" }],
-          ],
-        },
+        reply_markup: username ? {
+          inline_keyboard: [[{
+            text: t(lang, "add_to_group_btn"),
+            url: `https://t.me/${username}?startgroup=true`,
+          }]],
+        } : undefined,
       });
     }
   });
@@ -572,6 +569,19 @@ export function setupCommands(bot: Telegraf) {
   bot.command("help", async (ctx) => {
     const lang = await ctxLang(ctx);
     await ctx.reply(t(lang, "help_text"), { parse_mode: "Markdown" });
+  });
+
+  // /support
+  bot.command("support", async (ctx) => {
+    const lang = await ctxLang(ctx);
+    await ctx.reply(t(lang, "support_text"), {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [[
+          { text: "💬 @Backstreetdev", url: "https://t.me/Backstreetdev" },
+        ]],
+      },
+    });
   });
 
   // /settings

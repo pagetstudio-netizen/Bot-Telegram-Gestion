@@ -59,6 +59,7 @@ export async function startBot() {
       { command: "settings",  description: "⚙️ Paramètres & activation du bot" },
       { command: "language",  description: "🌍 Changer la langue du bot" },
       { command: "help",      description: "❓ Liste de toutes les commandes" },
+      { command: "support",   description: "💬 Contacter le support" },
       { command: "rules",     description: "📋 Afficher les règles du groupe" },
       { command: "stats",     description: "📊 Statistiques du groupe" },
       { command: "warn",      description: "⚠️ Avertir un membre (répondre au msg)" },
