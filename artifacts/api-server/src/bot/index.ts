@@ -80,7 +80,15 @@ export async function startBot() {
       logger.error({ err, update: ctx.update }, "Bot error");
     });
 
-    bot.launch({ dropPendingUpdates: true });
+    bot.launch({ dropPendingUpdates: true }).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("409")) {
+        logger.warn("Bot 409: une autre instance tourne déjà (ex: Render). Bot désactivé ici.");
+      } else {
+        logger.error({ err }, "Bot launch error");
+      }
+      bot = null;
+    });
     logger.info({ username: botInfo.username }, "Telegram bot started");
 
     process.once("SIGINT", () => bot?.stop("SIGINT"));

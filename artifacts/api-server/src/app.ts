@@ -34,7 +34,13 @@ app.use(express.urlencoded({ extended: true }));
 app.use("/api", router);
 
 // Serve dashboard static files (built by Vite)
-const dashboardDist = path.resolve(process.cwd(), "artifacts/dashboard/dist/public");
+// Essaie plusieurs chemins possibles selon l'environnement (Replit, Render, etc.)
+const candidatePaths = [
+  path.resolve(process.cwd(), "artifacts/dashboard/dist/public"),
+  path.resolve(__dirname, "../../dashboard/dist/public"),
+  path.resolve(__dirname, "../../../artifacts/dashboard/dist/public"),
+];
+const dashboardDist = candidatePaths.find((p) => fs.existsSync(p)) ?? candidatePaths[0];
 if (fs.existsSync(dashboardDist)) {
   app.use(express.static(dashboardDist));
   // SPA fallback: toutes les routes non-API renvoient index.html (Express 5 syntax)
